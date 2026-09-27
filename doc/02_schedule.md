@@ -114,6 +114,7 @@ Wi-Fi
 LINE Messaging API
   ↓
 スマートフォン
+```
 
 ## 作業
 
