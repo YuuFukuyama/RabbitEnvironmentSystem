@@ -51,13 +51,18 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+extern RTC_HandleTypeDef hrtc;
 
+void RTC_Alarm_IRQHandler(void)
+{
+  HAL_RTC_AlarmIRQHandler(&hrtc);
+}
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
 
 /* USER CODE BEGIN EV */
-
+extern RTC_HandleTypeDef hrtc;
 /* USER CODE END EV */
 
 /******************************************************************************/

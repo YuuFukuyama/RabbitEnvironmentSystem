@@ -59,7 +59,31 @@ static void MX_RTC_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void RTC_SetAlarmInSeconds(uint32_t seconds)
+{
+  RTC_TimeTypeDef now = {0};
+  RTC_AlarmTypeDef alarm = {0};
+  uint32_t total;
 
+  if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  total = (uint32_t)now.Hours * 3600U
+        + (uint32_t)now.Minutes * 60U
+        + (uint32_t)now.Seconds
+        + seconds;
+  total %= 86400U;
+
+  alarm.Alarm = RTC_ALARM_A;
+  alarm.AlarmTime.Hours = (uint8_t)(total / 3600U);
+  alarm.AlarmTime.Minutes = (uint8_t)((total % 3600U) / 60U);
+  alarm.AlarmTime.Seconds = (uint8_t)(total % 60U);
+  if (HAL_RTC_SetAlarm_IT(&hrtc, &alarm, RTC_FORMAT_BIN) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -102,6 +126,8 @@ int main(void)
   {
     Error_Handler();
   }
+  HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,8 +137,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
-    HAL_Delay(3000);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    RTC_SetAlarmInSeconds(10);
+    HAL_SuspendTick();
+    HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+    SystemClock_Config();
+    HAL_ResumeTick();
   }
   /* USER CODE END 3 */
 }
