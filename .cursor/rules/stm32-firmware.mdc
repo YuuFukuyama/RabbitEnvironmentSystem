@@ -1,0 +1,31 @@
+---
+description: STM32F103 ファームウェアの対象範囲と現在のハードウェア構成
+alwaysApply: true
+---
+
+# STM32 ファームウェア
+
+このリポジトリは STM32 の C ファームウェアである。Unity の資産（`.meta`、prefab、シーン）は扱わない。
+
+- 対象 MCU は STM32F103CBT6（LQFP48）。ファームウェアパッケージは STM32Cube FW_F1 V1.8.7。
+- 言語は C。ビルドの言語標準は `STM32CubeMx/CMakeLists.txt` の C11。HAL（`USE_HAL_DRIVER`、`STM32F103xB`）を使う。
+- 仕様の文書は `doc/`。ピン・クロック・有効ペリフェラルの正本は `STM32CubeMx/STM32CubeMx.ioc` と、そこから生成された初期化コード。
+
+## 現在有効なハードウェア
+
+文書に将来構成があっても、コードに無いペリフェラルを初期化済みとして扱わない。UART は未設定。
+
+- クロック: HSE 12 MHz、PLL ×6、SYSCLK 72 MHz。APB1 は 36 MHz（`RCC_HCLK_DIV2`）、APB2 は 72 MHz。Flash latency は 2。
+- I2C1: PB6 = SCL、PB7 = SDA、100 kHz、7bit、オープンドレイン。ハンドルは `hi2c1`。
+- LED: PA15 出力。ラベルは `LED_Pin` / `LED_GPIO_Port`（`main.h`）。JTAG は無効（SWD は PA13/PA14 のまま）。
+- ヒープ `0x200`、スタック `0x400`。大きな静的バッファやヒープ確保を足す前に容量を確認する。
+- `main` のループは `LED` を 3 秒間隔でトグルしている。
+
+HAL が失敗したら `Error_Handler()` に渡す。`Error_Handler` は割り込みを止めて無限ループする。
+
+```c
+if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+{
+  Error_Handler();
+}
+```

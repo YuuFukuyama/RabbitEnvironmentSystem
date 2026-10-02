@@ -1,0 +1,24 @@
+---
+description: ユーザーソースはルート CMakeLists の指定箇所に追加する
+globs: STM32CubeMx/CMakeLists.txt,STM32CubeMx/cmake/**/*.cmake,STM32CubeMx/cmake/**/CMakeLists.txt
+alwaysApply: false
+---
+
+# CMake
+
+`STM32CubeMx/CMakeLists.txt` は初回生成後に再生成されない。ユーザーのソース、インクルード、定義、ライブラリは、ファイル内の次のコメント直下に追加する。
+
+- `target_sources` の `# Add user sources here`
+- `target_include_directories` の `# Add user defined include paths`
+- `target_compile_definitions` の `# Add user defined symbols`
+- `target_link_libraries` の `# Add user defined libraries`
+
+`STM32CubeMx/cmake/stm32cubemx/CMakeLists.txt` は CubeMX 生成物である。ソース一覧をこちらに足さない。
+
+```cmake
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/sht31.c
+)
+```
+
+ビルド型の既定は Debug。`CMAKE_EXPORT_COMPILE_COMMANDS` は有効。ツールチェーンは CMake + GCC。

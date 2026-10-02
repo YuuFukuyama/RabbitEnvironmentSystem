@@ -1,0 +1,27 @@
+---
+description: CubeMX 再生成ファイルは USER CODE 区間だけを編集する
+globs: STM32CubeMx/Core/**/*.c,STM32CubeMx/Core/**/*.h
+alwaysApply: false
+---
+
+# CubeMX 生成コード
+
+`STM32CubeMx/Core/` は STM32CubeMX が再生成する。`ProjectManager.KeepUserCode=true` のため、`USER CODE BEGIN` と `USER CODE END` の内側だけを編集する。区間の外、マーカー行、生成された初期化本体は手で変えない。
+
+ピン・クロック・ペリフェラルの変更は `.ioc` で行い、再生成に任せる。`Drivers/` と `STM32CubeMx/cmake/stm32cubemx/` は編集しない。
+
+GPIO は `main.h` のラベルを使う。
+
+```c
+/* USER CODE BEGIN 3 */
+HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+HAL_Delay(3000);
+/* USER CODE END 3 */
+```
+
+```c
+/* 区間の外や、ラベルを使わない直書きは再生成で消える・ずれる */
+HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
+```
+
+アプリケーション処理が `USER CODE` に収まらない場合は、別の `.c` / `.h` に分け、ルートの `STM32CubeMx/CMakeLists.txt` の user sources に追加する。
