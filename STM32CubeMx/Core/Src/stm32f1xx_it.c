@@ -55,7 +55,23 @@ extern RTC_HandleTypeDef hrtc;
 
 void RTC_Alarm_IRQHandler(void)
 {
-  HAL_RTC_AlarmIRQHandler(&hrtc);
+  uint32_t guard;
+
+  /* STOP 中は SysTick が止まっている。RTOFF 待ちはループ回数で行う。 */
+  guard = 200000U;
+  while (((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U) && (guard > 0U))
+  {
+    guard--;
+  }
+  hrtc.Instance->CRL &= (uint16_t)~RTC_FLAG_ALRAF;
+
+  guard = 200000U;
+  while (((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U) && (guard > 0U))
+  {
+    guard--;
+  }
+  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
+  hrtc.State = HAL_RTC_STATE_READY;
 }
 /* USER CODE END 0 */
 

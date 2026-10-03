@@ -57,6 +57,8 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
+static void RTC_WaitRtoff(void);
+static void RTC_ClearAlarmFlag(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -129,7 +131,6 @@ static void RTC_SetAlarmInSeconds(uint32_t seconds)
   RTC_TimeTypeDef now = {0};
   RTC_AlarmTypeDef alarm = {0};
   uint32_t total;
-  uint32_t tickstart;
 
   if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
   {
@@ -150,7 +151,21 @@ static void RTC_SetAlarmInSeconds(uint32_t seconds)
     Error_Handler();
   }
 
-  /* CRL の消去が終わる前の CRH 書き込みは捨てられる。完了後に許可し直す。 */
+  /* 残っているアラームフラグを消してから割り込みを許可する。 */
+  RTC_ClearAlarmFlag();
+  RTC_WaitRtoff();
+  SET_BIT(hrtc.Instance->CRH, RTC_CRH_ALRIE);
+  RTC_WaitRtoff();
+  __HAL_RTC_ALARM_EXTI_ENABLE_RISING_EDGE();
+  __HAL_RTC_ALARM_EXTI_ENABLE_IT();
+  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
+  HAL_NVIC_ClearPendingIRQ(RTC_Alarm_IRQn);
+}
+
+static void RTC_WaitRtoff(void)
+{
+  uint32_t tickstart;
+
   tickstart = HAL_GetTick();
   while ((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U)
   {
@@ -159,10 +174,13 @@ static void RTC_SetAlarmInSeconds(uint32_t seconds)
       Error_Handler();
     }
   }
-  SET_BIT(hrtc.Instance->CRH, RTC_CRH_ALRIE);
-  __HAL_RTC_ALARM_EXTI_ENABLE_IT();
-  __HAL_RTC_ALARM_EXTI_ENABLE_RISING_EDGE();
-  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
+}
+
+static void RTC_ClearAlarmFlag(void)
+{
+  RTC_WaitRtoff();
+  hrtc.Instance->CRL &= (uint16_t)~RTC_FLAG_ALRAF;
+  RTC_WaitRtoff();
 }
 /* USER CODE END 0 */
 
@@ -235,7 +253,6 @@ int main(void)
       }
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
       RTC_SetAlarmInSeconds(10);
-      HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
       HAL_SuspendTick();
       HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
       SystemClock_Config();
