@@ -45,7 +45,8 @@ I2C_HandleTypeDef hi2c1;
 RTC_HandleTypeDef hrtc;
 
 /* USER CODE BEGIN PV */
-
+static uint8_t lse_ready;
+static uint8_t rtc_ready;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -54,11 +55,75 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
-
+static HAL_StatusTypeDef RTC_EnableLSE(void);
+static HAL_StatusTypeDef LCD_ShowRtc(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static HAL_StatusTypeDef RTC_EnableLSE(void)
+{
+  RCC_PeriphCLKInitTypeDef periph_clk = {0};
+  uint32_t tickstart;
+
+  __HAL_RCC_PWR_CLK_ENABLE();
+  SET_BIT(PWR->CR, PWR_CR_DBP);
+  tickstart = HAL_GetTick();
+  while (READ_BIT(PWR->CR, PWR_CR_DBP) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > RCC_DBP_TIMEOUT_VALUE)
+    {
+      return HAL_TIMEOUT;
+    }
+  }
+
+  if (__HAL_RCC_GET_FLAG(RCC_FLAG_LSERDY) == RESET)
+  {
+    __HAL_RCC_LSE_CONFIG(RCC_LSE_ON);
+    tickstart = HAL_GetTick();
+    while (__HAL_RCC_GET_FLAG(RCC_FLAG_LSERDY) == RESET)
+    {
+      if ((HAL_GetTick() - tickstart) > LSE_STARTUP_TIMEOUT)
+      {
+        return HAL_TIMEOUT;
+      }
+    }
+  }
+
+  periph_clk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+  periph_clk.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
+  return HAL_RCCEx_PeriphCLKConfig(&periph_clk);
+}
+
+static HAL_StatusTypeDef LCD_ShowRtc(void)
+{
+  RTC_TimeTypeDef now = {0};
+  char text[9];
+  HAL_StatusTypeDef status;
+
+  if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  text[0] = (char)('0' + (now.Hours / 10U));
+  text[1] = (char)('0' + (now.Hours % 10U));
+  text[2] = ':';
+  text[3] = (char)('0' + (now.Minutes / 10U));
+  text[4] = (char)('0' + (now.Minutes % 10U));
+  text[5] = ':';
+  text[6] = (char)('0' + (now.Seconds / 10U));
+  text[7] = (char)('0' + (now.Seconds % 10U));
+  text[8] = '\0';
+
+  status = ST7032_SetCursor(&hi2c1, 0U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  return ST7032_WriteString(&hi2c1, text);
+}
+
 static void RTC_SetAlarmInSeconds(uint32_t seconds)
 {
   RTC_TimeTypeDef now = {0};
@@ -110,7 +175,10 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  if (RTC_EnableLSE() == HAL_OK)
+  {
+    lse_ready = 1U;
+  }
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -122,12 +190,19 @@ int main(void)
   {
     Error_Handler();
   }
-  if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
+  if (rtc_ready != 0U)
+  {
+    if (LCD_ShowRtc() != HAL_OK)
+    {
+      Error_Handler();
+    }
+    HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
+  }
+  else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
   {
     Error_Handler();
   }
-  HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -138,11 +213,22 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    RTC_SetAlarmInSeconds(10);
-    HAL_SuspendTick();
-    HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
-    SystemClock_Config();
-    HAL_ResumeTick();
+    if (rtc_ready != 0U)
+    {
+      if (LCD_ShowRtc() != HAL_OK)
+      {
+        Error_Handler();
+      }
+      RTC_SetAlarmInSeconds(10);
+      HAL_SuspendTick();
+      HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+      SystemClock_Config();
+      HAL_ResumeTick();
+    }
+    else
+    {
+      HAL_Delay(3000);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -155,15 +241,13 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
-  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
@@ -183,12 +267,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -237,7 +315,10 @@ static void MX_RTC_Init(void)
 {
 
   /* USER CODE BEGIN RTC_Init 0 */
-
+  if (lse_ready == 0U)
+  {
+    return;
+  }
   /* USER CODE END RTC_Init 0 */
 
   RTC_TimeTypeDef sTime = {0};
@@ -281,7 +362,7 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RTC_Init 2 */
-
+  rtc_ready = 1U;
   /* USER CODE END RTC_Init 2 */
 
 }

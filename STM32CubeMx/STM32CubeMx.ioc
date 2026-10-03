@@ -126,6 +126,7 @@ RCC.PLLCLKFreq_Value=72000000
 RCC.PLLMCOFreq_Value=36000000
 RCC.PLLMUL=RCC_PLL_MUL6
 RCC.PLLSourceVirtual=RCC_PLLSOURCE_HSE
+# LSE is started in main.c SysInit. SystemClock_Config stays HSE/PLL so an LSE timeout is not Error_Handler.
 RCC.RTCClockSelection=RCC_RTCCLKSOURCE_LSE
 RCC.RTCFreq_Value=32768
 RCC.SYSCLKFreq_VALUE=72000000

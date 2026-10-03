@@ -16,6 +16,7 @@
 #define ST7032_CMD_DISPLAY_ON       0x0CU
 #define ST7032_CMD_CLEAR            0x01U
 #define ST7032_CMD_ENTRY_MODE       0x06U
+#define ST7032_CMD_DDRAM            0x80U
 
 static HAL_StatusTypeDef st7032_command(I2C_HandleTypeDef *hi2c, uint8_t command)
 {
@@ -98,6 +99,11 @@ HAL_StatusTypeDef ST7032_Init(I2C_HandleTypeDef *hi2c)
   HAL_Delay(1);
 
   return HAL_OK;
+}
+
+HAL_StatusTypeDef ST7032_SetCursor(I2C_HandleTypeDef *hi2c, uint8_t address)
+{
+  return st7032_command(hi2c, (uint8_t)(ST7032_CMD_DDRAM | address));
 }
 
 HAL_StatusTypeDef ST7032_WriteString(I2C_HandleTypeDef *hi2c, const char *text)

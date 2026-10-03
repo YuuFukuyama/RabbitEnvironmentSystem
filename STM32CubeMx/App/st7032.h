@@ -4,6 +4,7 @@
 #include "stm32f1xx_hal.h"
 
 HAL_StatusTypeDef ST7032_Init(I2C_HandleTypeDef *hi2c);
+HAL_StatusTypeDef ST7032_SetCursor(I2C_HandleTypeDef *hi2c, uint8_t address);
 HAL_StatusTypeDef ST7032_WriteString(I2C_HandleTypeDef *hi2c, const char *text);
 
 #endif
