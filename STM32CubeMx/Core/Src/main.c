@@ -47,6 +47,7 @@ RTC_HandleTypeDef hrtc;
 /* USER CODE BEGIN PV */
 static uint8_t lse_ready;
 static uint8_t rtc_ready;
+static uint16_t loop_count;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,6 +58,7 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
+static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -123,6 +125,24 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
   }
   return ST7032_WriteString(&hi2c1, text);
 }
+
+static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count)
+{
+  char text[7];
+
+  text[0] = 'L';
+  text[1] = ':';
+  text[2] = (char)('0' + ((count / 1000U) % 10U));
+  text[3] = (char)('0' + ((count / 100U) % 10U));
+  text[4] = (char)('0' + ((count / 10U) % 10U));
+  text[5] = (char)('0' + (count % 10U));
+  text[6] = '\0';
+  if (ST7032_SetCursor(&hi2c1, 0x40U) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+  return ST7032_WriteString(&hi2c1, text);
+}
 /* USER CODE END 0 */
 
 /**
@@ -170,6 +190,7 @@ int main(void)
     {
       Error_Handler();
     }
+    (void)LCD_ShowLoopCount(loop_count);
   }
   else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
   {
@@ -187,6 +208,8 @@ int main(void)
     if (rtc_ready != 0U)
     {
       (void)LCD_ShowRtc();
+      (void)LCD_ShowLoopCount(loop_count);
+      loop_count++;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
       HAL_Delay(1000);
     }
