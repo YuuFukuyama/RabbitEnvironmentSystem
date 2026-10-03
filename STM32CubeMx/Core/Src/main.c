@@ -57,8 +57,6 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
-static void RTC_WaitRtoff(void);
-static void RTC_ClearAlarmFlag(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -125,63 +123,6 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
   }
   return ST7032_WriteString(&hi2c1, text);
 }
-
-static void RTC_SetAlarmInSeconds(uint32_t seconds)
-{
-  RTC_TimeTypeDef now = {0};
-  RTC_AlarmTypeDef alarm = {0};
-  uint32_t total;
-
-  if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  total = (uint32_t)now.Hours * 3600U
-        + (uint32_t)now.Minutes * 60U
-        + (uint32_t)now.Seconds
-        + seconds;
-  total %= 86400U;
-
-  alarm.Alarm = RTC_ALARM_A;
-  alarm.AlarmTime.Hours = (uint8_t)(total / 3600U);
-  alarm.AlarmTime.Minutes = (uint8_t)((total % 3600U) / 60U);
-  alarm.AlarmTime.Seconds = (uint8_t)(total % 60U);
-  if (HAL_RTC_SetAlarm_IT(&hrtc, &alarm, RTC_FORMAT_BIN) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* 残っているアラームフラグを消してから割り込みを許可する。 */
-  RTC_ClearAlarmFlag();
-  RTC_WaitRtoff();
-  SET_BIT(hrtc.Instance->CRH, RTC_CRH_ALRIE);
-  RTC_WaitRtoff();
-  __HAL_RTC_ALARM_EXTI_ENABLE_RISING_EDGE();
-  __HAL_RTC_ALARM_EXTI_ENABLE_IT();
-  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
-  HAL_NVIC_ClearPendingIRQ(RTC_Alarm_IRQn);
-}
-
-static void RTC_WaitRtoff(void)
-{
-  uint32_t tickstart;
-
-  tickstart = HAL_GetTick();
-  while ((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U)
-  {
-    if ((HAL_GetTick() - tickstart) > RTC_TIMEOUT_VALUE)
-    {
-      Error_Handler();
-    }
-  }
-}
-
-static void RTC_ClearAlarmFlag(void)
-{
-  RTC_WaitRtoff();
-  hrtc.Instance->CRL &= (uint16_t)~RTC_FLAG_ALRAF;
-  RTC_WaitRtoff();
-}
 /* USER CODE END 0 */
 
 /**
@@ -229,8 +170,6 @@ int main(void)
     {
       Error_Handler();
     }
-    HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
   }
   else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
   {
@@ -247,16 +186,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
     if (rtc_ready != 0U)
     {
-      if (LCD_ShowRtc() != HAL_OK)
-      {
-        Error_Handler();
-      }
+      (void)LCD_ShowRtc();
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-      RTC_SetAlarmInSeconds(10);
-      HAL_SuspendTick();
-      HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
-      SystemClock_Config();
-      HAL_ResumeTick();
+      HAL_Delay(1000);
     }
     else
     {
