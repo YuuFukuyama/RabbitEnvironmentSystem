@@ -47,7 +47,6 @@ RTC_HandleTypeDef hrtc;
 /* USER CODE BEGIN PV */
 static uint8_t lse_ready;
 static uint8_t rtc_ready;
-static uint16_t loop_count;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,7 +60,7 @@ static HAL_StatusTypeDef RTC_WaitWrite(void);
 static HAL_StatusTypeDef RTC_Sync(void);
 static HAL_StatusTypeDef RTC_StartFromZero(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
-static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count);
+static HAL_StatusTypeDef LCD_ShowRtcClock(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -115,6 +114,8 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
 
   if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
   {
+    (void)ST7032_SetCursor(&hi2c1, 0U);
+    (void)ST7032_WriteString(&hi2c1, "GET ERR ");
     return HAL_ERROR;
   }
 
@@ -136,17 +137,27 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
   return ST7032_WriteString(&hi2c1, text);
 }
 
-static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count)
+static HAL_StatusTypeDef LCD_ShowRtcClock(void)
 {
-  char text[7];
+  char text[8];
+  uint32_t div_start;
+  uint32_t div_end;
+  uint32_t freq;
 
-  text[0] = 'L';
+  /* DIV は PRL から 0 へ RTCCLK ごとに減る。100 ms の減少量 x 10 で Hz を推定する。 */
+  div_start = hrtc.Instance->DIVL;
+  HAL_Delay(100);
+  div_end = hrtc.Instance->DIVL;
+  freq = ((div_start + LSE_VALUE - div_end) % LSE_VALUE) * 10U;
+
+  text[0] = 'F';
   text[1] = ':';
-  text[2] = (char)('0' + ((count / 1000U) % 10U));
-  text[3] = (char)('0' + ((count / 100U) % 10U));
-  text[4] = (char)('0' + ((count / 10U) % 10U));
-  text[5] = (char)('0' + (count % 10U));
-  text[6] = '\0';
+  text[2] = (char)('0' + ((freq / 10000U) % 10U));
+  text[3] = (char)('0' + ((freq / 1000U) % 10U));
+  text[4] = (char)('0' + ((freq / 100U) % 10U));
+  text[5] = (char)('0' + ((freq / 10U) % 10U));
+  text[6] = (char)('0' + (freq % 10U));
+  text[7] = '\0';
   if (ST7032_SetCursor(&hi2c1, 0x40U) != HAL_OK)
   {
     return HAL_ERROR;
@@ -300,7 +311,7 @@ int main(void)
   if (rtc_ready != 0U)
   {
     (void)LCD_ShowRtc();
-    (void)LCD_ShowLoopCount(loop_count);
+    (void)LCD_ShowRtcClock();
   }
   else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
   {
@@ -318,10 +329,9 @@ int main(void)
     if (rtc_ready != 0U)
     {
       (void)LCD_ShowRtc();
-      (void)LCD_ShowLoopCount(loop_count);
-      loop_count++;
+      (void)LCD_ShowRtcClock();
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-      HAL_Delay(1000);
+      HAL_Delay(900);
     }
     else
     {
