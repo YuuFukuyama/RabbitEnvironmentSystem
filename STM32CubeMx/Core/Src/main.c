@@ -58,8 +58,8 @@ static void MX_RTC_Init(void);
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef RTC_WaitWrite(void);
 static HAL_StatusTypeDef RTC_Sync(void);
+static HAL_StatusTypeDef RTC_ArmNextSecond(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
-static HAL_StatusTypeDef LCD_ShowRtcClock(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -136,32 +136,74 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
   return ST7032_WriteString(&hi2c1, text);
 }
 
-static HAL_StatusTypeDef LCD_ShowRtcClock(void)
+static uint32_t RTC_ReadCounter(void)
 {
-  char text[8];
-  uint32_t div_start;
-  uint32_t div_end;
-  uint32_t freq;
+  uint16_t high1;
+  uint16_t high2;
+  uint16_t low;
 
-  /* DIV は PRL から 0 へ RTCCLK ごとに減る。100 ms の減少量 x 10 で Hz を推定する。 */
-  div_start = hrtc.Instance->DIVL;
-  HAL_Delay(100);
-  div_end = hrtc.Instance->DIVL;
-  freq = ((div_start + LSE_VALUE - div_end) % LSE_VALUE) * 10U;
+  high1 = (uint16_t)(hrtc.Instance->CNTH & RTC_CNTH_RTC_CNT);
+  low = (uint16_t)(hrtc.Instance->CNTL & RTC_CNTL_RTC_CNT);
+  high2 = (uint16_t)(hrtc.Instance->CNTH & RTC_CNTH_RTC_CNT);
+  if (high1 != high2)
+  {
+    low = (uint16_t)(hrtc.Instance->CNTL & RTC_CNTL_RTC_CNT);
+    return (((uint32_t)high2) << 16) | low;
+  }
+  return (((uint32_t)high1) << 16) | low;
+}
 
-  text[0] = 'F';
-  text[1] = ':';
-  text[2] = (char)('0' + ((freq / 10000U) % 10U));
-  text[3] = (char)('0' + ((freq / 1000U) % 10U));
-  text[4] = (char)('0' + ((freq / 100U) % 10U));
-  text[5] = (char)('0' + ((freq / 10U) % 10U));
-  text[6] = (char)('0' + (freq % 10U));
-  text[7] = '\0';
-  if (ST7032_SetCursor(&hi2c1, 0x40U) != HAL_OK)
+static HAL_StatusTypeDef RTC_ArmNextSecond(void)
+{
+  uint32_t alarm;
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  SET_BIT(hrtc.Instance->CRL, RTC_CRL_CNF);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+
+  alarm = RTC_ReadCounter() + 1U;
+  hrtc.Instance->ALRH = (uint16_t)(alarm >> 16);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  hrtc.Instance->ALRL = (uint16_t)(alarm & 0xFFFFU);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  CLEAR_BIT(hrtc.Instance->CRL, RTC_CRL_CNF);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  if ((hrtc.Instance->CRL & RTC_CRL_CNF) != 0U)
   {
     return HAL_ERROR;
   }
-  return ST7032_WriteString(&hi2c1, text);
+
+  hrtc.Instance->CRL &= (uint16_t)~RTC_FLAG_ALRAF;
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  SET_BIT(hrtc.Instance->CRH, RTC_CRH_ALRIE);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+
+  __HAL_RTC_ALARM_EXTI_ENABLE_RISING_EDGE();
+  __HAL_RTC_ALARM_EXTI_ENABLE_IT();
+  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
+  HAL_NVIC_ClearPendingIRQ(RTC_Alarm_IRQn);
+  return HAL_OK;
 }
 
 static HAL_StatusTypeDef RTC_WaitWrite(void)
@@ -247,7 +289,8 @@ int main(void)
   if (rtc_ready != 0U)
   {
     (void)LCD_ShowRtc();
-    (void)LCD_ShowRtcClock();
+    HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
   }
   else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
   {
@@ -265,9 +308,18 @@ int main(void)
     if (rtc_ready != 0U)
     {
       (void)LCD_ShowRtc();
-      (void)LCD_ShowRtcClock();
-      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-      HAL_Delay(900);
+      if (RTC_ArmNextSecond() != HAL_OK)
+      {
+        HAL_Delay(1000);
+      }
+      else
+      {
+        HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+        HAL_SuspendTick();
+        HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+        SystemClock_Config();
+        HAL_ResumeTick();
+      }
     }
     else
     {
