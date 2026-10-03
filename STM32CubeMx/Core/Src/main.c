@@ -167,7 +167,7 @@ static HAL_StatusTypeDef RTC_ArmNextSecond(void)
     return HAL_TIMEOUT;
   }
 
-  alarm = RTC_ReadCounter() + 1U;
+  alarm = RTC_ReadCounter() + 10U;
   hrtc.Instance->ALRH = (uint16_t)(alarm >> 16);
   if (RTC_WaitWrite() != HAL_OK)
   {
