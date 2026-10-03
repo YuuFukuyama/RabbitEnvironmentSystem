@@ -129,6 +129,7 @@ static void RTC_SetAlarmInSeconds(uint32_t seconds)
   RTC_TimeTypeDef now = {0};
   RTC_AlarmTypeDef alarm = {0};
   uint32_t total;
+  uint32_t tickstart;
 
   if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
   {
@@ -148,6 +149,20 @@ static void RTC_SetAlarmInSeconds(uint32_t seconds)
   {
     Error_Handler();
   }
+
+  /* CRL の消去が終わる前の CRH 書き込みは捨てられる。完了後に許可し直す。 */
+  tickstart = HAL_GetTick();
+  while ((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > RTC_TIMEOUT_VALUE)
+    {
+      Error_Handler();
+    }
+  }
+  SET_BIT(hrtc.Instance->CRH, RTC_CRH_ALRIE);
+  __HAL_RTC_ALARM_EXTI_ENABLE_IT();
+  __HAL_RTC_ALARM_EXTI_ENABLE_RISING_EDGE();
+  __HAL_RTC_ALARM_EXTI_CLEAR_FLAG();
 }
 /* USER CODE END 0 */
 
@@ -212,14 +227,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     if (rtc_ready != 0U)
     {
       if (LCD_ShowRtc() != HAL_OK)
       {
         Error_Handler();
       }
+      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
       RTC_SetAlarmInSeconds(10);
+      HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
       HAL_SuspendTick();
       HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
       SystemClock_Config();
@@ -227,6 +243,7 @@ int main(void)
     }
     else
     {
+      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
       HAL_Delay(3000);
     }
   }
