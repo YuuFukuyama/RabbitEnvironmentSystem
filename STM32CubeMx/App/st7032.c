@@ -6,13 +6,13 @@
 #define ST7032_CTRL_DATA      0x40U
 #define ST7032_I2C_TIMEOUT_MS 100U
 
-/* Sitronix ST7032 Rev 1.4 の 8bit 初期化例。 */
+/* Sitronix ST7032 Rev 1.4 の 8bit 初期化。コントラストは 3.3V 向け（α=40、増幅率 2.0）。 */
 #define ST7032_CMD_FUNCTION_SET     0x38U
 #define ST7032_CMD_FUNCTION_SET_EXT 0x39U
 #define ST7032_CMD_INTERNAL_OSC     0x14U
-#define ST7032_CMD_CONTRAST_LOW     0x70U
+#define ST7032_CMD_CONTRAST_LOW     0x78U
 #define ST7032_CMD_POWER_ICON       0x5EU
-#define ST7032_CMD_FOLLOWER         0x6AU
+#define ST7032_CMD_FOLLOWER         0x6CU
 #define ST7032_CMD_DISPLAY_ON       0x0CU
 #define ST7032_CMD_CLEAR            0x01U
 #define ST7032_CMD_ENTRY_MODE       0x06U
