@@ -58,6 +58,7 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef RTC_WaitWrite(void);
+static HAL_StatusTypeDef RTC_Sync(void);
 static HAL_StatusTypeDef RTC_StartFromZero(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
 static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count);
@@ -104,6 +105,13 @@ static HAL_StatusTypeDef LCD_ShowRtc(void)
   RTC_TimeTypeDef now = {0};
   char text[9];
   HAL_StatusTypeDef status;
+
+  if (RTC_Sync() != HAL_OK)
+  {
+    (void)ST7032_SetCursor(&hi2c1, 0U);
+    (void)ST7032_WriteString(&hi2c1, "NO SYNC");
+    return HAL_ERROR;
+  }
 
   if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
   {
@@ -161,8 +169,48 @@ static HAL_StatusTypeDef RTC_WaitWrite(void)
   return HAL_OK;
 }
 
+static HAL_StatusTypeDef RTC_Sync(void)
+{
+  uint32_t tickstart;
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  CLEAR_BIT(hrtc.Instance->CRL, RTC_CRL_RSF);
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+
+  tickstart = HAL_GetTick();
+  while ((hrtc.Instance->CRL & RTC_CRL_RSF) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > RTC_TIMEOUT_VALUE)
+    {
+      return HAL_TIMEOUT;
+    }
+  }
+  return HAL_OK;
+}
+
 static HAL_StatusTypeDef RTC_StartFromZero(void)
 {
+  uint32_t tickstart;
+
+  __HAL_RCC_PWR_CLK_ENABLE();
+  SET_BIT(PWR->CR, PWR_CR_DBP);
+  tickstart = HAL_GetTick();
+  while (READ_BIT(PWR->CR, PWR_CR_DBP) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > RCC_DBP_TIMEOUT_VALUE)
+    {
+      return HAL_TIMEOUT;
+    }
+  }
+  __HAL_RCC_BKP_CLK_ENABLE();
+  __HAL_RCC_RTC_ENABLE();
+
   if (RTC_WaitWrite() != HAL_OK)
   {
     return HAL_TIMEOUT;
@@ -198,7 +246,15 @@ static HAL_StatusTypeDef RTC_StartFromZero(void)
     return HAL_TIMEOUT;
   }
   CLEAR_BIT(hrtc.Instance->CRL, RTC_CRL_CNF);
-  return RTC_WaitWrite();
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  if ((hrtc.Instance->CRL & RTC_CRL_CNF) != 0U)
+  {
+    return HAL_ERROR;
+  }
+  return HAL_OK;
 }
 /* USER CODE END 0 */
 
@@ -243,10 +299,7 @@ int main(void)
   }
   if (rtc_ready != 0U)
   {
-    if (LCD_ShowRtc() != HAL_OK)
-    {
-      Error_Handler();
-    }
+    (void)LCD_ShowRtc();
     (void)LCD_ShowLoopCount(loop_count);
   }
   else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
