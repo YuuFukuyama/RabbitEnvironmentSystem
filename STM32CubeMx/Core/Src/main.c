@@ -57,6 +57,8 @@ static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
+static HAL_StatusTypeDef RTC_WaitWrite(void);
+static HAL_StatusTypeDef RTC_StartFromZero(void);
 static HAL_StatusTypeDef LCD_ShowRtc(void);
 static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count);
 /* USER CODE END PFP */
@@ -142,6 +144,61 @@ static HAL_StatusTypeDef LCD_ShowLoopCount(uint16_t count)
     return HAL_ERROR;
   }
   return ST7032_WriteString(&hi2c1, text);
+}
+
+static HAL_StatusTypeDef RTC_WaitWrite(void)
+{
+  uint32_t tickstart;
+
+  tickstart = HAL_GetTick();
+  while ((hrtc.Instance->CRL & RTC_CRL_RTOFF) == 0U)
+  {
+    if ((HAL_GetTick() - tickstart) > RTC_TIMEOUT_VALUE)
+    {
+      return HAL_TIMEOUT;
+    }
+  }
+  return HAL_OK;
+}
+
+static HAL_StatusTypeDef RTC_StartFromZero(void)
+{
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  SET_BIT(hrtc.Instance->CRL, RTC_CRL_CNF);
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  hrtc.Instance->PRLH = 0U;
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  hrtc.Instance->PRLL = (uint16_t)(LSE_VALUE - 1U);
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  hrtc.Instance->CNTH = 0U;
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  hrtc.Instance->CNTL = 0U;
+
+  if (RTC_WaitWrite() != HAL_OK)
+  {
+    return HAL_TIMEOUT;
+  }
+  CLEAR_BIT(hrtc.Instance->CRL, RTC_CRL_CNF);
+  return RTC_WaitWrite();
 }
 /* USER CODE END 0 */
 
@@ -351,7 +408,10 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RTC_Init 2 */
-  rtc_ready = 1U;
+  if (RTC_StartFromZero() == HAL_OK)
+  {
+    rtc_ready = 1U;
+  }
   /* USER CODE END RTC_Init 2 */
 
 }
