@@ -17,6 +17,11 @@
 #define ST7032_CMD_CLEAR            0x01U
 #define ST7032_CMD_ENTRY_MODE       0x06U
 #define ST7032_CMD_DDRAM            0x80U
+#define ST7032_CMD_ICON_ADDR        0x40U
+#define ST7032_ICON_COUNT           16U
+/* S56 はアドレス 0x0B の bit4。 */
+#define ST7032_ICON_S56_ADDR        0x0BU
+#define ST7032_ICON_S56_BIT         0x10U
 
 static HAL_StatusTypeDef st7032_command(I2C_HandleTypeDef *hi2c, uint8_t command)
 {
@@ -25,6 +30,43 @@ static HAL_StatusTypeDef st7032_command(I2C_HandleTypeDef *hi2c, uint8_t command
   payload[0] = ST7032_CTRL_CMD;
   payload[1] = command;
   return HAL_I2C_Master_Transmit(hi2c, ST7032_I2C_ADDR_8BIT, payload, 2U, ST7032_I2C_TIMEOUT_MS);
+}
+
+/* RS=1 で 1 バイト書く。 */
+static HAL_StatusTypeDef st7032_data(I2C_HandleTypeDef *hi2c, uint8_t data)
+{
+  uint8_t payload[2];
+
+  payload[0] = ST7032_CTRL_DATA;
+  payload[1] = data;
+  return HAL_I2C_Master_Transmit(hi2c, ST7032_I2C_ADDR_8BIT, payload, 2U, ST7032_I2C_TIMEOUT_MS);
+}
+
+/* アイコン RAM を消してから、命令テーブルを通常へ戻す。 */
+static HAL_StatusTypeDef st7032_clear_icons(I2C_HandleTypeDef *hi2c)
+{
+  uint8_t index;
+  HAL_StatusTypeDef status;
+
+  status = st7032_command(hi2c, ST7032_CMD_FUNCTION_SET_EXT);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = st7032_command(hi2c, ST7032_CMD_ICON_ADDR);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  for (index = 0U; index < ST7032_ICON_COUNT; index++)
+  {
+    status = st7032_data(hi2c, 0x00U);
+    if (status != HAL_OK)
+    {
+      return status;
+    }
+  }
+  return st7032_command(hi2c, ST7032_CMD_FUNCTION_SET);
 }
 
 HAL_StatusTypeDef ST7032_Init(I2C_HandleTypeDef *hi2c)
@@ -98,7 +140,41 @@ HAL_StatusTypeDef ST7032_Init(I2C_HandleTypeDef *hi2c)
   }
   HAL_Delay(1);
 
-  return HAL_OK;
+  return st7032_clear_icons(hi2c);
+}
+
+HAL_StatusTypeDef ST7032_SetIconS56(I2C_HandleTypeDef *hi2c, uint8_t on)
+{
+  HAL_StatusTypeDef status;
+  uint8_t data;
+
+  if (hi2c == NULL)
+  {
+    return HAL_ERROR;
+  }
+
+  data = 0x00U;
+  if (on != 0U)
+  {
+    data = ST7032_ICON_S56_BIT;
+  }
+
+  status = st7032_command(hi2c, ST7032_CMD_FUNCTION_SET_EXT);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = st7032_command(hi2c, (uint8_t)(ST7032_CMD_ICON_ADDR | ST7032_ICON_S56_ADDR));
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = st7032_data(hi2c, data);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  return st7032_command(hi2c, ST7032_CMD_FUNCTION_SET);
 }
 
 HAL_StatusTypeDef ST7032_SetCursor(I2C_HandleTypeDef *hi2c, uint8_t address)

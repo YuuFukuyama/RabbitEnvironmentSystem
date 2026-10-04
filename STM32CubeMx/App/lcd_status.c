@@ -99,6 +99,22 @@ static uint8_t append_deci(char *dst, uint8_t pos, int16_t deci)
   return pos;
 }
 
+/* 温度を T:22.5C の形で継ぎ足す。 */
+static uint8_t append_temp(char *dst, uint8_t pos, int16_t temp_deci_c)
+{
+  pos = copy_text(dst, pos, "T:");
+  pos = append_deci(dst, pos, temp_deci_c);
+  return copy_text(dst, pos, "C");
+}
+
+/* 湿度を H:52.3% の形で継ぎ足す。 */
+static uint8_t append_hum(char *dst, uint8_t pos, int16_t hum_deci_rh)
+{
+  pos = copy_text(dst, pos, "H:");
+  pos = append_deci(dst, pos, hum_deci_rh);
+  return copy_text(dst, pos, "%");
+}
+
 /* 行の残りを空白で埋め、終端を付ける。 */
 static void finish_line(char *line, uint8_t pos)
 {
@@ -152,7 +168,14 @@ static void build_status_line(char *line, const EnvView *view)
   finish_line(line, pos);
 }
 
-/* 2 行目に温湿度か NO DATA を書く。 */
+/* NORMAL は上段を温度、下段を湿度にする。 */
+static void build_normal_lines(char *line0, char *line1, const EnvView *view)
+{
+  finish_line(line0, append_temp(line0, 0U, view->temp_deci_c));
+  finish_line(line1, append_hum(line1, 0U, view->hum_deci_rh));
+}
+
+/* 下段に温湿度を並べるか、NO DATA を書く。 */
 static void build_value_line(char *line, const EnvView *view)
 {
   uint8_t pos;
@@ -165,11 +188,9 @@ static void build_value_line(char *line, const EnvView *view)
     return;
   }
 
-  pos = copy_text(line, pos, "T");
-  pos = append_deci(line, pos, view->temp_deci_c);
-  pos = copy_text(line, pos, "C H");
-  pos = append_deci(line, pos, view->hum_deci_rh);
-  pos = copy_text(line, pos, "%");
+  pos = append_temp(line, pos, view->temp_deci_c);
+  pos = copy_text(line, pos, " ");
+  pos = append_hum(line, pos, view->hum_deci_rh);
   finish_line(line, pos);
 }
 
@@ -197,8 +218,21 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
     return HAL_ERROR;
   }
 
-  build_status_line(line0, view);
-  build_value_line(line1, view);
+  if ((view->sensor_error == 0U) && (view->risk == ENV_RISK_NORMAL))
+  {
+    build_normal_lines(line0, line1, view);
+    status = ST7032_SetIconS56(hi2c, 0U);
+  }
+  else
+  {
+    build_status_line(line0, view);
+    build_value_line(line1, view);
+    status = ST7032_SetIconS56(hi2c, 1U);
+  }
+  if (status != HAL_OK)
+  {
+    return status;
+  }
 
   status = write_line(hi2c, LCD_LINE0, line0);
   if (status != HAL_OK)
