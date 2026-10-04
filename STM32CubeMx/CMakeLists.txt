@@ -46,6 +46,13 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     App/st7032.c
+    App/env_judge.c
+    App/lcd_status.c
+    App/app_cycle.c
+    # 温湿度基板が来たら env_dummy.c を本番取得へ差し替え、ENV_SENSOR_USE_DUMMY を外す
+    App/env_dummy.c
+    # Wi-Fi 基板が来たら wifi_dummy.c を本番送信へ差し替え、WIFI_USE_DUMMY を外す
+    App/wifi_dummy.c
 )
 
 # Add include paths
@@ -57,6 +64,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+    ENV_SENSOR_USE_DUMMY
+    WIFI_USE_DUMMY
 )
 
 # Remove wrong libob.a library dependency when using cpp files

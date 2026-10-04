@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_cycle.h"
+#include "env_config.h"
 #include "st7032.h"
 /* USER CODE END Includes */
 
@@ -57,9 +59,8 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RTC_EnableLSE(void);
 static HAL_StatusTypeDef RTC_WaitWrite(void);
-static HAL_StatusTypeDef RTC_Sync(void);
-static HAL_StatusTypeDef RTC_ArmNextSecond(void);
-static HAL_StatusTypeDef LCD_ShowRtc(void);
+static uint32_t RTC_ReadCounter(void);
+static HAL_StatusTypeDef RTC_ArmAlarm(uint32_t seconds);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -98,44 +99,6 @@ static HAL_StatusTypeDef RTC_EnableLSE(void)
   return HAL_RCCEx_PeriphCLKConfig(&periph_clk);
 }
 
-static HAL_StatusTypeDef LCD_ShowRtc(void)
-{
-  RTC_TimeTypeDef now = {0};
-  char text[9];
-  HAL_StatusTypeDef status;
-
-  if (RTC_Sync() != HAL_OK)
-  {
-    (void)ST7032_SetCursor(&hi2c1, 0U);
-    (void)ST7032_WriteString(&hi2c1, "NO SYNC");
-    return HAL_ERROR;
-  }
-
-  if (HAL_RTC_GetTime(&hrtc, &now, RTC_FORMAT_BIN) != HAL_OK)
-  {
-    (void)ST7032_SetCursor(&hi2c1, 0U);
-    (void)ST7032_WriteString(&hi2c1, "GET ERR ");
-    return HAL_ERROR;
-  }
-
-  text[0] = (char)('0' + (now.Hours / 10U));
-  text[1] = (char)('0' + (now.Hours % 10U));
-  text[2] = ':';
-  text[3] = (char)('0' + (now.Minutes / 10U));
-  text[4] = (char)('0' + (now.Minutes % 10U));
-  text[5] = ':';
-  text[6] = (char)('0' + (now.Seconds / 10U));
-  text[7] = (char)('0' + (now.Seconds % 10U));
-  text[8] = '\0';
-
-  status = ST7032_SetCursor(&hi2c1, 0U);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  return ST7032_WriteString(&hi2c1, text);
-}
-
 static uint32_t RTC_ReadCounter(void)
 {
   uint16_t high1;
@@ -153,7 +116,7 @@ static uint32_t RTC_ReadCounter(void)
   return (((uint32_t)high1) << 16) | low;
 }
 
-static HAL_StatusTypeDef RTC_ArmNextSecond(void)
+static HAL_StatusTypeDef RTC_ArmAlarm(uint32_t seconds)
 {
   uint32_t alarm;
 
@@ -167,7 +130,8 @@ static HAL_StatusTypeDef RTC_ArmNextSecond(void)
     return HAL_TIMEOUT;
   }
 
-  alarm = RTC_ReadCounter() + 10U;
+  /* カウンタは 1 秒。次の測定まで止める。 */
+  alarm = RTC_ReadCounter() + seconds;
   hrtc.Instance->ALRH = (uint16_t)(alarm >> 16);
   if (RTC_WaitWrite() != HAL_OK)
   {
@@ -220,31 +184,6 @@ static HAL_StatusTypeDef RTC_WaitWrite(void)
   }
   return HAL_OK;
 }
-
-static HAL_StatusTypeDef RTC_Sync(void)
-{
-  uint32_t tickstart;
-
-  if (RTC_WaitWrite() != HAL_OK)
-  {
-    return HAL_TIMEOUT;
-  }
-  CLEAR_BIT(hrtc.Instance->CRL, RTC_CRL_RSF);
-  if (RTC_WaitWrite() != HAL_OK)
-  {
-    return HAL_TIMEOUT;
-  }
-
-  tickstart = HAL_GetTick();
-  while ((hrtc.Instance->CRL & RTC_CRL_RSF) == 0U)
-  {
-    if ((HAL_GetTick() - tickstart) > RTC_TIMEOUT_VALUE)
-    {
-      return HAL_TIMEOUT;
-    }
-  }
-  return HAL_OK;
-}
 /* USER CODE END 0 */
 
 /**
@@ -288,13 +227,8 @@ int main(void)
   }
   if (rtc_ready != 0U)
   {
-    (void)LCD_ShowRtc();
     HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
-  }
-  else if (ST7032_WriteString(&hi2c1, "TEST") != HAL_OK)
-  {
-    Error_Handler();
   }
   /* USER CODE END 2 */
 
@@ -305,26 +239,39 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (rtc_ready != 0U)
     {
-      (void)LCD_ShowRtc();
-      if (RTC_ArmNextSecond() != HAL_OK)
+      uint32_t now_sec;
+
+      if (rtc_ready != 0U)
       {
-        HAL_Delay(1000);
+        now_sec = RTC_ReadCounter();
       }
       else
       {
-        HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
-        HAL_SuspendTick();
-        HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
-        SystemClock_Config();
-        HAL_ResumeTick();
+        now_sec = HAL_GetTick() / 1000U;
       }
-    }
-    else
-    {
+
+      App_MeasureOnce(&hi2c1, now_sec);
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-      HAL_Delay(3000);
+
+      if (rtc_ready != 0U)
+      {
+        if (RTC_ArmAlarm(MEASURE_INTERVAL_SEC) != HAL_OK)
+        {
+          HAL_Delay((uint32_t)MEASURE_INTERVAL_SEC * 1000U);
+        }
+        else
+        {
+          HAL_SuspendTick();
+          HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+          SystemClock_Config();
+          HAL_ResumeTick();
+        }
+      }
+      else
+      {
+        HAL_Delay((uint32_t)MEASURE_INTERVAL_SEC * 1000U);
+      }
     }
   }
   /* USER CODE END 3 */
