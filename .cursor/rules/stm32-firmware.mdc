@@ -10,6 +10,8 @@ alwaysApply: true
 - 対象 MCU は STM32F103CBT6（LQFP48）。ファームウェアパッケージは STM32Cube FW_F1 V1.8.7。
 - 言語は C。ビルドの言語標準は `STM32CubeMx/CMakeLists.txt` の C11。HAL（`USE_HAL_DRIVER`、`STM32F103xB`）を使う。
 - 仕様の文書は `doc/`。ピン・クロック・有効ペリフェラルの正本は `STM32CubeMx/STM32CubeMx.ioc` と、そこから生成された初期化コード。
+- コードを書く前に `doc/04_detailed_design.md` を確認し、詳細設計に合わせる。
+- 基板や周辺モジュールなどハードウェアの情報は `firmware/` の md を参照する（`stbee-mini-v2.md`、`gy-sht31-d.md`、`st7032i.md`、`esp32-c3-devkitm-1.md`、`i2c.md`）。
 
 ## 現在有効なハードウェア
 
