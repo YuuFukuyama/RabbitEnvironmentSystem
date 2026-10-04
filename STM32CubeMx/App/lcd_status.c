@@ -234,6 +234,15 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
     return status;
   }
 
+#if defined(ENV_SENSOR_USE_DUMMY)
+  /* ダミー取得のあいだは下向き三角を点ける。警告の S56 とは別アドレス。 */
+  status = ST7032_SetIconS37(hi2c, 1U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+#endif
+
   status = write_line(hi2c, LCD_LINE0, line0);
   if (status != HAL_OK)
   {
