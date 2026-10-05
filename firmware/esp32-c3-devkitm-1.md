@@ -138,7 +138,7 @@ STM32 との接続は次のとおり。論理レベルは両方 3.3 V。
 | USART RX | 7（GPIO7、UART1 TX） |
 | GND | GND |
 
-シルクの TX / RX は UART0 なので、STM32 の AT 用にはつながない。CH340C と信号が衝突する。STM32 側の USART 番号は未決定である。
+シルクの TX / RX は UART0 なので、STM32 の AT 用にはつながない。CH340C と信号が衝突する。STM32 側のピンは [usart.md](usart.md)。番号は未決定である。
 
 ## AT ファームウェアの導入
 
@@ -230,7 +230,7 @@ OK
 STM32 が測定と判定を行い、ESP32-C3 は AT ファームのまま Wi-Fi と HTTPS を担当する。測定値の項目、タイムアウト、再接続の待ちは詳細設計の未決定項目のままである。
 
 - 給電は 5 V。GND は STM32 と共通。I/O は 3.3 V。
-- STM32 の USART TX を GPIO6、USART RX を GPIO7 へつなぐ。115200、8N1、CR LF、フロー制御なし。
+- STM32 の USART TX を GPIO6、USART RX を GPIO7 へつなぐ。ピンの候補と配線は [usart.md](usart.md)。115200、8N1、CR LF、フロー制御なし。
 - シルクの TX / RX（GPIO21 / GPIO20）は書き込みとログ専用。
 - GPIO4、GPIO5、GPIO9 は AT の RTS / CTS と BOOT に残す。
 - Bluetooth は使わない。

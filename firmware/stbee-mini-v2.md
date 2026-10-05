@@ -146,4 +146,5 @@ JTAG と兼用のポートは、JTAG を無効にするまで汎用 I/O にな�
 - LED は PA15（LED2）。L で点灯する。
 - JTAG は無効にし、SWD は残す。PA13 は SWDIO、PA14 は SWCLK のままなので、LED1 は GPIO にしない。
 - I2C1 は PB6 が SCL、PB7 が SDA。
+- USART は ESP32-C3 との接続に使う。ピンと配線は [usart.md](usart.md)。まだ初期化していない。
 - USB は使わない。PA14 は SWCLK であり、USB の D+ プルアップを H に保つ用途には使っていない。
