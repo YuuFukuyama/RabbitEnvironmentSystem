@@ -5,7 +5,7 @@
 
 #include "stm32f1xx_hal.h"
 
-/* AT と AT+GMR を送る。OK が無ければ HAL_ERROR。周期は止めない。 */
+/* AT、AT+GMR、未接続なら Wi-Fi 参加を行う。失敗しても周期は止めない。 */
 HAL_StatusTypeDef At_Probe(void);
 
 #endif

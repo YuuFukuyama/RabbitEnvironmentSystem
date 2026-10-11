@@ -31,7 +31,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
 
   EnvJudge_Apply(&reading, now_sec, &view, notes, &note_count, APP_NOTE_CAP);
   (void)LcdStatus_Show(hi2c, &view);
-  /* 失敗しても測定と表示は続ける。 */
+  /* AT と Wi-Fi の確認。失敗しても測定と表示は続ける。 */
   (void)At_Probe();
 
   for (index = 0U; index < note_count; index++)
