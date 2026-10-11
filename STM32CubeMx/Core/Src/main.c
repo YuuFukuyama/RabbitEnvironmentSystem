@@ -24,6 +24,7 @@
 #include "app_cycle.h"
 #include "env_config.h"
 #include "st7032.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -233,6 +234,26 @@ int main(void)
   {
     HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
+  }
+
+  /* AT を1回送り、OK の有無を LCD に出す。測定ループには進まない。 */
+  {
+    uint8_t rx[32];
+    uint16_t got;
+    const char *line;
+
+    __HAL_UART_CLEAR_OREFLAG(&huart1);
+    HAL_UART_Transmit(&huart1, (const uint8_t *)"AT\r\n", 4U, 100U);
+    memset(rx, 0, sizeof(rx));
+    HAL_UART_Receive(&huart1, rx, sizeof(rx) - 1U, 1000U);
+    got = (uint16_t)((sizeof(rx) - 1U) - huart1.RxXferCount);
+    rx[got] = 0U;
+    line = (strstr((char *)rx, "OK") != NULL) ? "AT OK" : "AT NG";
+    ST7032_SetCursor(&hi2c1, 0U);
+    ST7032_WriteString(&hi2c1, line);
+    while (1)
+    {
+    }
   }
   /* USER CODE END 2 */
 

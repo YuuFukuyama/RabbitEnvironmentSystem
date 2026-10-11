@@ -146,5 +146,5 @@ JTAG と兼用のポートは、JTAG を無効にするまで汎用 I/O にな�
 - LED は PA15（LED2）。L で点灯する。
 - JTAG は無効にし、SWD は残す。PA13 は SWDIO、PA14 は SWCLK のままなので、LED1 は GPIO にしない。
 - I2C1 は PB6 が SCL、PB7 が SDA。
-- USART1 は PA9（31 番）が TX、PA10（32 番）が RX。ESP32-C3 への給電は 39 番の 5 V と 40 番の GND で、3.3 V ピン（3 番、38 番）からは給電しない。配線は [usart.md](usart.md)。まだ初期化していない。
+- USART1 は PA9（31 番）が TX、PA10（32 番）が RX。CubeMX の `MX_USART1_UART_Init` で初期化する。AT コマンドの送受信はまだ無い。ESP32-C3 への給電は 39 番の 5 V と 40 番の GND で、3.3 V ピン（3 番、38 番）からは給電しない。配線は [usart.md](usart.md)。
 - USB は使わない。PA14 は SWCLK であり、USB の D+ プルアップを H に保つ用途には使っていない。
