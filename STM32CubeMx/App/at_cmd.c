@@ -367,7 +367,7 @@ HAL_StatusTypeDef At_HttpAuth(const char *token)
 {
   uint16_t n;
   uint16_t got;
-  uint32_t len;
+  uint16_t len;
 
   if ((token == NULL) || (token[0] == '\0'))
   {
