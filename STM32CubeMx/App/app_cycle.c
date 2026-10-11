@@ -1,6 +1,7 @@
-/* 取得、判定、LCD 更新、通知の引き渡しを 1 回行う。 */
+/* 取得、判定、LCD 更新、AT の確認、通知の引き渡しを 1 回行う。 */
 
 #include "app_cycle.h"
+#include "at_cmd.h"
 #include "env_judge.h"
 #include "env_sensor.h"
 #include "lcd_status.h"
@@ -30,6 +31,8 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
 
   EnvJudge_Apply(&reading, now_sec, &view, notes, &note_count, APP_NOTE_CAP);
   (void)LcdStatus_Show(hi2c, &view);
+  /* 失敗しても測定と表示は続ける。 */
+  (void)At_Probe();
 
   for (index = 0U; index < note_count; index++)
   {

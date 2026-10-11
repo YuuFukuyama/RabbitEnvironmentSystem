@@ -60,7 +60,7 @@ ESP-AT の UART1 に合わせる。
 
 ## このリポジトリでの割り当て
 
-CubeMX は USART1 を非同期で初期化する。`MX_USART1_UART_Init` が `HAL_UART_Init` を呼び、失敗すると `Error_Handler()` に入る。設定は 115200 baud、8 ビット、パリティなし、ストップ 1、フロー制御なしである。TX は PA9、RX は PA10 で、割り込みは使わない。AT コマンドの送受信はまだ無い。
+CubeMX は USART1 を非同期で初期化する。`MX_USART1_UART_Init` が `HAL_UART_Init` を呼び、失敗すると `Error_Handler()` に入る。設定は 115200 baud、8 ビット、パリティなし、ストップ 1、フロー制御なしである。TX は PA9、RX は PA10 で、割り込みは使わない。測定のたびに `AT` と `AT+GMR` を送り、`OK` を読む。`AT+GMR` は応答に `MINI-1` があることも見る。失敗しても測定周期は続ける。
 
 - USART1 の TX は PA9（31 番）、RX は PA10（32 番）。ESP32-C3 の UART1 は、GPIO6 が RX、GPIO7 が TX である。
 - 給電は 39 番の 5 V を、ESP32-C3 のシルク 5V（J1 の 13 番または 14 番）へ入れる。GND は 40 番である。3 番と 38 番の 3.3 V からは給電しない。
