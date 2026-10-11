@@ -90,8 +90,8 @@ TX / RX のシルクがある列が J3、5V と 3V3 のシルクがある列が 
 モジュールの推奨電源は 3.3 V（3.0〜3.6 V）。基板は 5 V を LDO で 3.3 V にする。給電は次のどれか一つにする。公式ガイドでも同時使用はしない。
 
 - Micro-USB の 5 V。書き込みとログを見るときの既定
-- 5V ピンと GND
-- 3V3 ピンと GND
+- ピンヘッダのシルク 5V と GND。TX / RX の列（J3）ではなく、反対側の列（J1）の 13 番と 14 番である。15 番は GND。Micro-USB の 5 V と同じレールである
+- 3V3 ピンと GND。J1 の 2 番と 3 番で、LDO の出力である
 
 外部電源がモジュールへ供給できる電流は 0.5 A 以上（データシートの I_VDD）。Wi-Fi 送信のピークは、3.3 V、25 ℃、デューティ 100% で次のとおり。
 
@@ -102,7 +102,7 @@ TX / RX のシルクがある列が J3、5V と 3V3 のシルクがある列が 
 | 802.11n HT20、MCS7、17.5 dBm | 290 mA |
 | 受信 802.11b/g/n HT20 | 82 mA |
 
-STBee Mini の 3.3 V 出力で、この基板の 3V3 ピンから無線まで給電しない。ピークが小さいレギュレータの定格を超える。組み込み時は 5V ピンへ 5 V を入れ、GND を STM32 と共通にする。USB ケーブルを挿したまま 5V ピンへ別の 5 V を入れない。3V3 ピンは LDO 出力の観測と、負荷の小さい外部回路に使う。
+STBee Mini の 3.3 V 出力で、この基板の 3V3 ピンから無線まで給電しない。ピークが小さいレギュレータの定格を超える。組み込み時の電源入力は J1 のシルク 5V（13 番または 14 番）で、STBee Mini の 5 V をここへ入れ、GND を STM32 と共通にする。USB ケーブルを挿したまま、このピンへ STBee Mini の 5 V は入れない。3V3 ピン（J1 の 2 番と 3 番）は LDO の出力であり、STBee Mini の 3.3 V からは給電しない。STBee Mini の 5 V ピンへ 9〜12 V を入れる外部電源は、この 5V ピンへつないだままでは使わない。
 
 ## 起動ピン
 
@@ -134,11 +134,11 @@ STM32 との接続は次のとおり。論理レベルは両方 3.3 V。
 
 | STM32 | ESP32-C3 基板 |
 | --- | --- |
-| USART TX | 6（GPIO6、UART1 RX） |
-| USART RX | 7（GPIO7、UART1 TX） |
+| USART1_TX PA9（STBee 31 番） | J3 の 9 番（GPIO6、UART1 RX） |
+| USART1_RX PA10（STBee 32 番） | J3 の 8 番（GPIO7、UART1 TX） |
 | GND | GND |
 
-シルクの TX / RX は UART0 なので、STM32 の AT 用にはつながない。CH340C と信号が衝突する。STM32 側のピンは [usart.md](usart.md)。番号は未決定である。
+シルクの TX / RX は UART0 なので、STM32 の AT 用にはつながない。CH340C と信号が衝突する。STM32 側は USART1 の PA9 / PA10 である。配線は [usart.md](usart.md)。
 
 ## AT ファームウェアの導入
 
@@ -229,8 +229,8 @@ OK
 
 STM32 が測定と判定を行い、ESP32-C3 は AT ファームのまま Wi-Fi と HTTPS を担当する。測定値の項目、タイムアウト、再接続の待ちは詳細設計の未決定項目のままである。
 
-- 給電は 5 V。GND は STM32 と共通。I/O は 3.3 V。
-- STM32 の USART TX を GPIO6、USART RX を GPIO7 へつなぐ。ピンの候補と配線は [usart.md](usart.md)。115200、8N1、CR LF、フロー制御なし。
+- 給電は STBee Mini の 5 V を、J1 のシルク 5V（13 番または 14 番）へ入れる。GND は共通。I/O は 3.3 V。3V3 ピンへは給電しない。USB ケーブルは挿さない。
+- STM32 の USART1_TX（PA9）を GPIO6、USART1_RX（PA10）を GPIO7 へつなぐ。配線は [usart.md](usart.md)。115200、8N1、CR LF、フロー制御なし。
 - シルクの TX / RX（GPIO21 / GPIO20）は書き込みとログ専用。
 - GPIO4、GPIO5、GPIO9 は AT の RTS / CTS と BOOT に残す。
 - Bluetooth は使わない。
