@@ -236,19 +236,58 @@ int main(void)
     HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
   }
 
-  /* AT を1回送り、OK の有無を LCD に出す。測定ループには進まない。 */
+  /* AT を1回送り、送信中も受信する。OK の有無を LCD に出し、測定ループには進まない。 */
   {
     uint8_t rx[32];
     uint16_t got;
-    const char *line;
+    uint32_t t0;
+    const uint8_t cmd[] = "AT\r\n";
+    uint8_t i;
+    char line[8];
 
-    __HAL_UART_CLEAR_OREFLAG(&huart1);
-    HAL_UART_Transmit(&huart1, (const uint8_t *)"AT\r\n", 4U, 100U);
     memset(rx, 0, sizeof(rx));
-    HAL_UART_Receive(&huart1, rx, sizeof(rx) - 1U, 1000U);
-    got = (uint16_t)((sizeof(rx) - 1U) - huart1.RxXferCount);
+    got = 0U;
+    __HAL_UART_CLEAR_OREFLAG(&huart1);
+    t0 = HAL_GetTick();
+    for (i = 0U; i < 4U; i++)
+    {
+      while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TXE) == RESET)
+      {
+      }
+      huart1.Instance->DR = cmd[i];
+      while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET && got < (sizeof(rx) - 1U))
+      {
+        rx[got++] = (uint8_t)(huart1.Instance->DR & 0xFFU);
+      }
+    }
+    while ((HAL_GetTick() - t0) < 1000U && got < (sizeof(rx) - 1U))
+    {
+      if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
+      {
+        rx[got++] = (uint8_t)(huart1.Instance->DR & 0xFFU);
+      }
+    }
     rx[got] = 0U;
-    line = (strstr((char *)rx, "OK") != NULL) ? "AT OK" : "AT NG";
+    if (strstr((char *)rx, "OK") != NULL)
+    {
+      line[0] = 'A';
+      line[1] = 'T';
+      line[2] = ' ';
+      line[3] = 'O';
+      line[4] = 'K';
+      line[5] = '\0';
+    }
+    else
+    {
+      line[0] = 'N';
+      line[1] = 'G';
+      line[2] = ' ';
+      line[3] = 'n';
+      line[4] = '=';
+      line[5] = (char)('0' + ((got / 10U) % 10U));
+      line[6] = (char)('0' + (got % 10U));
+      line[7] = '\0';
+    }
     ST7032_SetCursor(&hi2c1, 0U);
     ST7032_WriteString(&hi2c1, line);
     while (1)
