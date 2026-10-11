@@ -13,4 +13,7 @@ HAL_StatusTypeDef ST7032_SetIconS56(I2C_HandleTypeDef *hi2c, uint8_t on);
 /* アイコン S37 を点ける。on が 0 のときは消す。 */
 HAL_StatusTypeDef ST7032_SetIconS37(I2C_HandleTypeDef *hi2c, uint8_t on);
 
+/* アイコン S1 を点ける。on が 0 のときは消す。 */
+HAL_StatusTypeDef ST7032_SetIconS1(I2C_HandleTypeDef *hi2c, uint8_t on);
+
 #endif

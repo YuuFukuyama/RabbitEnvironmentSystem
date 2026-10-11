@@ -250,3 +250,12 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
   }
   return write_line(hi2c, LCD_LINE1, line1);
 }
+
+HAL_StatusTypeDef LcdStatus_ShowWifi(I2C_HandleTypeDef *hi2c, uint8_t connected)
+{
+  if (hi2c == NULL)
+  {
+    return HAL_ERROR;
+  }
+  return ST7032_SetIconS1(hi2c, connected);
+}

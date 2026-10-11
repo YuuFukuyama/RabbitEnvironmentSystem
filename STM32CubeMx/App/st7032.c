@@ -19,11 +19,13 @@
 #define ST7032_CMD_DDRAM            0x80U
 #define ST7032_CMD_ICON_ADDR        0x40U
 #define ST7032_ICON_COUNT           16U
-/* S56 はアドレス 0x0B の D4。S37 はアドレス 0x07 の D3。 */
+/* S56 はアドレス 0x0B の D4。S37 はアドレス 0x07 の D3。S1 はアドレス 0x00 の D4。 */
 #define ST7032_ICON_S56_ADDR        0x0BU
 #define ST7032_ICON_S56_BIT         0x10U
 #define ST7032_ICON_S37_ADDR        0x07U
 #define ST7032_ICON_S37_BIT         0x08U
+#define ST7032_ICON_S1_ADDR         0x00U
+#define ST7032_ICON_S1_BIT          0x10U
 
 static HAL_StatusTypeDef st7032_command(I2C_HandleTypeDef *hi2c, uint8_t command)
 {
@@ -194,6 +196,11 @@ HAL_StatusTypeDef ST7032_SetIconS56(I2C_HandleTypeDef *hi2c, uint8_t on)
 HAL_StatusTypeDef ST7032_SetIconS37(I2C_HandleTypeDef *hi2c, uint8_t on)
 {
   return st7032_set_icon_bit(hi2c, ST7032_ICON_S37_ADDR, ST7032_ICON_S37_BIT, on);
+}
+
+HAL_StatusTypeDef ST7032_SetIconS1(I2C_HandleTypeDef *hi2c, uint8_t on)
+{
+  return st7032_set_icon_bit(hi2c, ST7032_ICON_S1_ADDR, ST7032_ICON_S1_BIT, on);
 }
 
 HAL_StatusTypeDef ST7032_SetCursor(I2C_HandleTypeDef *hi2c, uint8_t address)
