@@ -33,6 +33,12 @@ typedef struct
 /* 直近の判定から、中継へ出す 1 件を作る。 */
 void EnvJudge_CopyReport(const WifiNote *notes, uint8_t note_count, EnvReport *report);
 
+/* 正常取得が一度でもあれば 1。無いときの 0 は測定値ではない。 */
+uint8_t EnvJudge_HasValue(void);
+
+/* この周期の異常通知を送り切れたら、復帰通知の資格にする。 */
+void EnvJudge_CommitSend(uint8_t sent);
+
 /* 送信結果を稼働状態へ反映する。センサー異常中は上書きしない。 */
 void EnvJudge_NoteWifi(uint8_t failed);
 

@@ -15,7 +15,7 @@ typedef struct
   uint8_t has_value;                /* 正常取得が一度でもあれば 1。 */
   uint8_t warning_notified;         /* WARNING の初回通知を出したら 1。 */
   uint8_t warning_repeated;         /* WARNING の再通知を出したら 1。 */
-  uint8_t alert_sent;               /* この異常中に異常通知を出したら 1。復帰通知に使う。 */
+  uint8_t alert_sent;               /* DANGER か CRITICAL の送信に成功したら 1。復帰通知に使う。 */
   int16_t last_temp;                /* 最後に成功した温度。0.1℃単位。 */
   int16_t last_hum;                 /* 最後に成功した湿度。0.1%単位。 */
   uint32_t last_ok_sec;             /* 最後に成功した秒。センサー異常の経過分に使う。 */
@@ -29,6 +29,14 @@ typedef struct
 
 /* 起動時に誰か定期通知が ON なら 1。未取得のあいだは 0。 */
 static uint8_t notify_mode_on;
+/* この周期の DANGER か CRITICAL を、送信成功まで復帰の資格にしない。 */
+static uint8_t pending_alert;
+/* この周期の WARNING 初回。失敗したら次の周期で出し直す。 */
+static uint8_t pending_warn_first;
+/* DANGER の遷移通知を届けたら 1。失敗しているあいだは出し直す。 */
+static uint8_t danger_alert_done;
+/* この周期で DANGER の遷移通知を載せた。 */
+static uint8_t pending_danger_open;
 
 /* 判定と通知の継続状態。電源が入るたびに初期値へ戻る。 */
 static EnvJudgeState state =
@@ -42,7 +50,7 @@ static EnvJudgeState state =
   .has_value = 0U,                    /* 正常取得はまだない。 */
   .warning_notified = 0U,             /* WARNING の初回通知はまだ。 */
   .warning_repeated = 0U,             /* WARNING の再通知はまだ。 */
-  .alert_sent = 0U,                   /* 異常通知はまだない。 */
+  .alert_sent = 0U,                   /* DANGER と CRITICAL の通知はまだない。 */
   .last_temp = 0,                     /* 成功した温度はまだない。 */
   .last_hum = 0,                      /* 成功した湿度はまだない。 */
   .last_ok_sec = 0U,                  /* 成功した時刻はまだない。 */
@@ -67,15 +75,15 @@ static uint8_t elapsed_minutes(uint32_t now_sec, uint32_t start_sec)
   return (uint8_t)minutes;
 }
 
-/* 通知を 1 件追加する。枠が無いときは捨てる。 */
-static void push_note(WifiNote *notes, uint8_t *note_count, uint8_t note_cap,
-                      WifiNoteKind kind, EnvRisk risk)
+/* 通知を 1 件追加する。枠が無いときは 0。 */
+static uint8_t push_note(WifiNote *notes, uint8_t *note_count, uint8_t note_cap,
+                         WifiNoteKind kind, EnvRisk risk)
 {
   WifiNote *note;
 
   if ((notes == NULL) || (note_count == NULL) || (*note_count >= note_cap))
   {
-    return;
+    return 0U;
   }
 
   note = &notes[*note_count];
@@ -86,6 +94,7 @@ static void push_note(WifiNote *notes, uint8_t *note_count, uint8_t note_cap,
   note->temp_deci_c = state.last_temp;
   note->hum_deci_rh = state.last_hum;
   (*note_count)++;
+  return 1U;
 }
 
 /* 生存確認の周期に入っていれば通知を足す。 */
@@ -336,6 +345,15 @@ static void fill_view(EnvView *view, uint32_t now_sec, uint8_t sensor_error)
   }
 }
 
+/* 異常通知を載せたら、送信成功まで復帰の資格にしない。 */
+static void arm_alert(uint8_t pushed)
+{
+  if (pushed != 0U)
+  {
+    pending_alert = 1U;
+  }
+}
+
 /* 危険度の遷移に合わせて通知種別を決める。 */
 static void notify_risk(EnvRisk prev, EnvRisk now_risk, uint32_t now_sec,
                         WifiNote *notes, uint8_t *note_count, uint8_t note_cap)
@@ -350,6 +368,7 @@ static void notify_risk(EnvRisk prev, EnvRisk now_risk, uint32_t now_sec,
     state.warning_repeated = 0U;
     state.alert_sent = 0U;
     state.danger_notify_ordinal = 0U;
+    danger_alert_done = 0U;
     return;
   }
 
@@ -357,50 +376,60 @@ static void notify_risk(EnvRisk prev, EnvRisk now_risk, uint32_t now_sec,
   {
     if ((state.warning_notified == 0U) && (state.warn_count >= WARNING_CONFIRM_COUNT))
     {
-      push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_WARNING);
-      state.warning_notified = 1U;
-      state.warning_notify_sec = now_sec;
-      state.alert_sent = 1U;
+      if (push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_WARNING) != 0U)
+      {
+        state.warning_notified = 1U;
+        state.warning_notify_sec = now_sec;
+        pending_warn_first = 1U;
+      }
     }
     else if ((state.warning_notified != 0U) && (state.warning_repeated == 0U) &&
              ((now_sec - state.warning_notify_sec) >= WARNING_REPEAT_SEC))
     {
-      push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_WARNING);
-      state.warning_repeated = 1U;
-      state.alert_sent = 1U;
+      if (push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_WARNING) != 0U)
+      {
+        state.warning_repeated = 1U;
+      }
     }
     return;
   }
 
   if (now_risk == ENV_RISK_DANGER)
   {
-    if (prev != ENV_RISK_DANGER)
+    if ((prev != ENV_RISK_DANGER) || (danger_alert_done == 0U))
     {
-      push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_DANGER);
-      state.danger_notify_ordinal = 1U;
-      state.alert_sent = 1U;
+      if (push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_DANGER) != 0U)
+      {
+        if (state.danger_notify_ordinal == 0U)
+        {
+          state.danger_notify_ordinal = 1U;
+        }
+        pending_alert = 1U;
+        pending_danger_open = 1U;
+      }
     }
     else if ((state.danger_notify_ordinal > 0U) &&
              (state.danger_notify_ordinal <= (UINT32_MAX / DANGER_NOTIFY_SEC)) &&
              ((now_sec - state.danger_since_sec) >=
               (state.danger_notify_ordinal * DANGER_NOTIFY_SEC)))
     {
-      push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_DANGER);
-      state.danger_notify_ordinal++;
-      state.alert_sent = 1U;
+      if (push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_DANGER) != 0U)
+      {
+        state.danger_notify_ordinal++;
+        pending_alert = 1U;
+      }
     }
     return;
   }
 
   if (prev != ENV_RISK_CRITICAL)
   {
-    push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_CRITICAL);
+    arm_alert(push_note(notes, note_count, note_cap, WIFI_NOTE_ALERT, ENV_RISK_CRITICAL));
   }
   else
   {
-    push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_CRITICAL);
+    arm_alert(push_note(notes, note_count, note_cap, WIFI_NOTE_REPEAT, ENV_RISK_CRITICAL));
   }
-  state.alert_sent = 1U;
 }
 
 /* 取得成功時に判定と通知状態を進める。 */
@@ -594,9 +623,41 @@ void EnvJudge_CopyReport(const WifiNote *notes, uint8_t note_count, EnvReport *r
     {
       report->periodic = 1U;
     }
+    else if (notes[index].kind == WIFI_NOTE_SENSOR_ERROR)
+    {
+      /* 危険度が正常のまま出すと、中継が正常復帰にする。 */
+      if (state.risk != ENV_RISK_NORMAL)
+      {
+        report->notify = 1U;
+      }
+    }
     else
     {
       report->notify = 1U;
     }
   }
+}
+
+uint8_t EnvJudge_HasValue(void)
+{
+  return state.has_value;
+}
+
+void EnvJudge_CommitSend(uint8_t sent)
+{
+  if ((sent != 0U) && (pending_alert != 0U))
+  {
+    state.alert_sent = 1U;
+  }
+  if ((sent != 0U) && (pending_danger_open != 0U))
+  {
+    danger_alert_done = 1U;
+  }
+  if ((sent == 0U) && (pending_warn_first != 0U))
+  {
+    state.warning_notified = 0U;
+  }
+  pending_alert = 0U;
+  pending_warn_first = 0U;
+  pending_danger_open = 0U;
 }

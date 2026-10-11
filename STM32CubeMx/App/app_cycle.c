@@ -58,6 +58,13 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   EnvJudge_Apply(&reading, judge_sec, &view, notes, &note_count, APP_NOTE_CAP);
   (void)LcdStatus_Show(hi2c, &view);
 
+  /* 正常取得の前は 0 を測定値として送らない。 */
+  if (EnvJudge_HasValue() == 0U)
+  {
+    EnvJudge_CommitSend(0U);
+    return;
+  }
+
   /* ダミー取得でも、中継の設定があれば測定を毎回送る。 */
   if (Relay_Enabled() != 0U)
   {
@@ -65,6 +72,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
     {
       wifi_failed = 1U;
     }
+    EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
     EnvJudge_NoteWifi(wifi_failed);
     return;
   }
@@ -76,6 +84,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
       wifi_failed = 1U;
     }
   }
+  EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
   if (note_count > 0U)
   {
     EnvJudge_NoteWifi(wifi_failed);
