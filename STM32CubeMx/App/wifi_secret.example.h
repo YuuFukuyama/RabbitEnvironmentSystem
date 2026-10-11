@@ -6,4 +6,10 @@
 #define WIFI_SSID ""
 #define WIFI_PASS ""
 
+/* 中継のホスト名。スキームは付けない。例は name.workers.dev */
+#define RELAY_HOST ""
+
+/* 中継の Secret DEVICE_TOKEN と同じ値。リポジトリには書かない。 */
+#define DEVICE_TOKEN ""
+
 #endif

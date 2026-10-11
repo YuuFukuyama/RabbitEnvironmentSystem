@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/lcd_status.c
     App/app_cycle.c
     App/at_cmd.c
+    App/relay_client.c
     # 温湿度基板が来たら env_dummy.c を本番取得へ差し替え、ENV_SENSOR_USE_DUMMY を外す
     App/env_dummy.c
     # Wi-Fi 基板が来たら wifi_dummy.c を本番送信へ差し替え、WIFI_USE_DUMMY を外す

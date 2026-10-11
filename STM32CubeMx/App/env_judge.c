@@ -27,6 +27,9 @@ typedef struct
   uint32_t heartbeat_period;        /* 最後に生存確認を出した周期番号。 */
 } EnvJudgeState;
 
+/* 起動時に誰か定期通知が ON なら 1。未取得のあいだは 0。 */
+static uint8_t notify_mode_on;
+
 /* 判定と通知の継続状態。電源が入るたびに初期値へ戻る。 */
 static EnvJudgeState state =
 {
@@ -91,7 +94,7 @@ static void consider_heartbeat(uint32_t now_sec, WifiNote *notes, uint8_t *note_
 {
   uint32_t period;
 
-  if ((HEARTBEAT_ENABLE == 0) || (HEARTBEAT_SEC == 0U))
+  if ((notify_mode_on == 0U) || (HEARTBEAT_ENABLE == 0) || (HEARTBEAT_SEC == 0U))
   {
     return;
   }
@@ -529,5 +532,71 @@ void EnvJudge_NoteWifi(uint8_t failed)
   else if (state.system == SYS_WIFI_ERROR)
   {
     state.system = SYS_NORMAL;
+  }
+}
+
+void EnvJudge_SetNotifyMode(uint8_t on)
+{
+  notify_mode_on = on;
+}
+
+/* 記録済みの秒へ差分を足す。0 は未開始のままにする。 */
+static void shift_sec(uint32_t *sec, uint32_t delta)
+{
+  if (*sec != 0U)
+  {
+    *sec += delta;
+  }
+}
+
+void EnvJudge_AcceptClock(uint32_t old_sec, uint32_t new_sec)
+{
+  uint32_t delta;
+
+  if (new_sec >= old_sec)
+  {
+    delta = new_sec - old_sec;
+    shift_sec(&state.last_ok_sec, delta);
+    shift_sec(&state.episode_start_sec, delta);
+    shift_sec(&state.warning_since_sec, delta);
+    shift_sec(&state.warning_notify_sec, delta);
+    shift_sec(&state.danger_since_sec, delta);
+  }
+  if (HEARTBEAT_SEC != 0U)
+  {
+    state.heartbeat_period = new_sec / HEARTBEAT_SEC;
+  }
+}
+
+void EnvJudge_CopyReport(const WifiNote *notes, uint8_t note_count, EnvReport *report)
+{
+  uint8_t index;
+
+  if (report == NULL)
+  {
+    return;
+  }
+  report->notify = 0U;
+  report->periodic = 0U;
+  report->risk = state.risk;
+  report->temp_state = state.temp_state;
+  report->hum_state = state.hum_state;
+  report->temp_deci_c = state.last_temp;
+  report->hum_deci_rh = state.last_hum;
+
+  if (notes == NULL)
+  {
+    return;
+  }
+  for (index = 0U; index < note_count; index++)
+  {
+    if (notes[index].kind == WIFI_NOTE_HEARTBEAT)
+    {
+      report->periodic = 1U;
+    }
+    else
+    {
+      report->notify = 1U;
+    }
   }
 }

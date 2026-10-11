@@ -8,4 +8,16 @@
 /* AT、AT+GMR、未接続なら Wi-Fi 参加を行う。失敗しても周期は止めない。 */
 HAL_StatusTypeDef At_Probe(void);
 
+/* 以降の HTTP に Authorization と Content-Type を付ける。 */
+HAL_StatusTypeDef At_HttpAuth(const char *token);
+
+/* HTTPS GET を行い、応答を At_HttpResponse に残す。 */
+HAL_StatusTypeDef At_HttpGet(const char *url);
+
+/* HTTPS POST の本文を送り、応答を At_HttpResponse に残す。 */
+HAL_StatusTypeDef At_HttpPost(const char *url, const char *body);
+
+/* 直前の HTTP 応答。 */
+const char *At_HttpResponse(void);
+
 #endif

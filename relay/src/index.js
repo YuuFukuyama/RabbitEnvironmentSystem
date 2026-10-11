@@ -1,8 +1,11 @@
-// LINE の Webhook を受け、署名を検証して返信する。許可は LineUsers、定期通知の ON は NotifyUsers。測定の表示は History を読む。
+// LINE の Webhook を受け、署名を検証して返信する。許可は LineUsers、定期通知の ON は NotifyUsers。
+// 本体の操作取得と測定は /v1/ops と /v1/measurements。測定は History に足す。
 
 const ALLOW_KEY = "allowed-user-ids";
 const NOTIFY_KEY = "notify-on-user-ids";
+const BOOT_NOTIFY_KEY = "boot-notify-user-ids";
 const HISTORY_KEY = "measurements";
+const HISTORY_LIMIT = 1008;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LINE_TEXT_LIMIT = 5000;
 const DETAIL_BUBBLES = 5;
@@ -15,8 +18,33 @@ const DANGER_LABEL = {
   CRITICAL: "極めて危険",
 };
 
+const TEMP_STATES = ["TEMP_FRZN", "TEMP_COLD", "TEMP_BEST", "TEMP_HIGH", "TEMP_CRIT"];
+const HUM_STATES = ["HUM_DRY", "HUM_LOW", "HUM_BEST", "HUM_HIGH", "HUM_WET"];
+const DANGERS = ["NORMAL", "WARNING", "DANGER", "CRITICAL"];
+const TEMP_LABEL = {
+  TEMP_FRZN: "低温異常",
+  TEMP_COLD: "低温警告",
+  TEMP_BEST: "正常",
+  TEMP_HIGH: "高温警告",
+  TEMP_CRIT: "高温異常",
+};
+const HUM_LABEL = {
+  HUM_DRY: "乾燥異常",
+  HUM_LOW: "乾燥警告",
+  HUM_BEST: "正常",
+  HUM_HIGH: "高湿度警告",
+  HUM_WET: "高湿度異常",
+};
+
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/v1/ops" && request.method === "GET") {
+      return deviceOps(request, env, url);
+    }
+    if (url.pathname === "/v1/measurements" && request.method === "POST") {
+      return deviceMeasurement(request, env);
+    }
     if (request.method !== "POST") {
       return new Response("ok");
     }
@@ -58,6 +86,227 @@ export default {
     return new Response("ok");
   },
 };
+
+// 本体の Bearer が Secret と一致するかを返す。
+function authorized(request, env) {
+  const header = request.headers.get("Authorization") ?? "";
+  const prefix = "Bearer ";
+  const secret = env.DEVICE_TOKEN;
+  if (typeof secret !== "string" || secret.length === 0 || !header.startsWith(prefix)) {
+    return false;
+  }
+  const got = header.slice(prefix.length);
+  if (got.length !== secret.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < got.length; i++) {
+    diff |= got.charCodeAt(i) ^ secret.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+// 認証が無ければ 401 を返す。
+function rejectDevice(request, env) {
+  if (!authorized(request, env)) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  return null;
+}
+
+// 日本時間の ISO 8601 を返す。
+function japanIso(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}+09:00`;
+}
+
+// 起動時の操作取得。boot=1 のときだけ時刻と通知モードを載せる。
+async function deviceOps(request, env, url) {
+  const rejected = rejectDevice(request, env);
+  if (rejected) {
+    return rejected;
+  }
+  const body = { ops: [] };
+  if (url.searchParams.get("boot") === "1") {
+    const notifyIds = await readIdList(env.NotifyUsers, NOTIFY_KEY);
+    const notifyMode = notifyIds.length > 0 ? 1 : 0;
+    await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
+    body.time = japanIso();
+    body.notifyMode = notifyMode;
+  }
+  return Response.json(body);
+}
+
+// 起動時に ON だった利用者を、内容が変わったときだけ書く。
+async function storeBootNotify(kv, ids) {
+  const next = JSON.stringify(ids);
+  const prev = await kv.get(BOOT_NOTIFY_KEY);
+  if (prev !== next) {
+    await kv.put(BOOT_NOTIFY_KEY, next);
+  }
+}
+
+// 測定を履歴へ足し、notify と periodic に従って LINE へ送る。
+async function deviceMeasurement(request, env) {
+  const rejected = rejectDevice(request, env);
+  if (rejected) {
+    return rejected;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(await request.text());
+  } catch {
+    return new Response("bad json", { status: 400 });
+  }
+  const row = measurementRow(payload);
+  if (!row) {
+    return new Response("bad measurement", { status: 400 });
+  }
+  await appendHistory(env.History, row.record);
+  const text = lineText(row.record, row.notify, row.periodic);
+  if (text) {
+    const ids = row.notify === 1
+      ? await allRecipients(env)
+      : await readIdList(env.NotifyUsers, BOOT_NOTIFY_KEY);
+    try {
+      await pushText(env.CHANNEL_ACCESS_TOKEN, ids, text);
+    } catch {
+      // 履歴は残っている。LINE の失敗で本体に再送させない。
+    }
+  }
+  return new Response("ok");
+}
+
+// 本文を履歴 1 件と通知フラグに分ける。足りなければ null。
+function measurementRow(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (!Number.isFinite(payload.temperature) || !Number.isFinite(payload.humidity)) {
+    return null;
+  }
+  if (!TEMP_STATES.includes(payload.temperatureState) || !HUM_STATES.includes(payload.humidityState)) {
+    return null;
+  }
+  if (!DANGERS.includes(payload.danger)) {
+    return null;
+  }
+  if (payload.notify !== 0 && payload.notify !== 1) {
+    return null;
+  }
+  if (payload.periodic !== 0 && payload.periodic !== 1) {
+    return null;
+  }
+  return {
+    notify: payload.notify,
+    periodic: payload.periodic,
+    record: {
+      at: japanIso(),
+      temperature: payload.temperature,
+      humidity: payload.humidity,
+      temperatureState: payload.temperatureState,
+      humidityState: payload.humidityState,
+      danger: payload.danger,
+    },
+  };
+}
+
+// 履歴の末尾へ足し、1008 件を超えた分は古いものから捨てる。
+async function appendHistory(kv, record) {
+  const records = await readHistory(kv);
+  records.push(record);
+  const kept = records.length > HISTORY_LIMIT ? records.slice(records.length - HISTORY_LIMIT) : records;
+  await kv.put(HISTORY_KEY, JSON.stringify(kept));
+}
+
+// 送る文面を決める。notify が 1 のときは定期通知を重ねない。
+function lineText(record, notify, periodic) {
+  if (notify === 1) {
+    return alertText(record);
+  }
+  if (periodic === 1) {
+    return periodicText(record);
+  }
+  return "";
+}
+
+// 異常か復帰の文面を返す。
+function alertText(row) {
+  const temp = formatValue(row.temperature);
+  const hum = formatValue(row.humidity);
+  const danger = dangerText(row.danger);
+  if (row.danger === "CRITICAL" && row.temperatureState === "TEMP_CRIT") {
+    return `【高温異常】\n危険度：${danger}\n\n温度：${temp}℃\n湿度：${hum}%\n\n高温状態を検知しました。`;
+  }
+  if (row.danger === "CRITICAL" && row.temperatureState === "TEMP_FRZN") {
+    return `【低温異常】\n危険度：${danger}\n\n温度：${temp}℃\n湿度：${hum}%\n\n低温状態を検知しました。`;
+  }
+  if (row.danger === "CRITICAL" && row.humidityState === "HUM_DRY") {
+    return `【湿度異常】\n危険度：${danger}\n\n温度：${temp}℃\n湿度：${hum}%\n\n乾燥状態を検知しました。`;
+  }
+  if (row.danger === "CRITICAL") {
+    return `【湿度異常】\n危険度：${danger}\n\n温度：${temp}℃\n湿度：${hum}%\n\n高湿度状態を検知しました。`;
+  }
+  if (row.danger === "NORMAL") {
+    return `【正常復帰】\n環境危険度：${danger}\n\n温度：${temp}℃\n湿度：${hum}%\n\n温湿度が正常範囲に戻りました。`;
+  }
+  const state = row.danger === "DANGER" ? "温度・湿度警告" : statePhrase(row);
+  return `【環境異常】\n危険度：${danger}\n状態：${state}\n\n温度：${temp}℃\n湿度：${hum}%`;
+}
+
+// 警告の状態名を返す。
+function statePhrase(row) {
+  const parts = [];
+  if (row.temperatureState !== "TEMP_BEST") {
+    parts.push(TEMP_LABEL[row.temperatureState]);
+  }
+  if (row.humidityState !== "HUM_BEST") {
+    parts.push(HUM_LABEL[row.humidityState]);
+  }
+  return parts.length > 0 ? parts.join("・") : "正常";
+}
+
+// 定期通知の文面を返す。
+function periodicText(row) {
+  return `【定期通知】\n環境危険度：${dangerText(row.danger)}\n\nシステムは正常に動作しています。\n\n温度：${formatValue(row.temperature)}℃\n湿度：${formatValue(row.humidity)}%`;
+}
+
+// 許可済みユーザーと管理者へ同じ文面を送る。
+async function allRecipients(env) {
+  const ids = await readIdList(env.LineUsers, ALLOW_KEY);
+  if (typeof env.ADMIN_USER_ID === "string" && env.ADMIN_USER_ID && !ids.includes(env.ADMIN_USER_ID)) {
+    ids.push(env.ADMIN_USER_ID);
+  }
+  return ids;
+}
+
+// 同じ文面を利用者へ push する。
+async function pushText(token, ids, text) {
+  if (!ids || ids.length === 0) {
+    return;
+  }
+  await fetch("https://api.line.me/v2/bot/message/multicast", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ids.slice(0, 500),
+      messages: [{ type: "text", text }],
+    }),
+  });
+}
 
 // チャネルシークレットで Webhook の署名を検証する。
 async function verifySignature(body, signature, secret) {

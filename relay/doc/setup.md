@@ -33,13 +33,14 @@ Cloudflare のアカウントは1つで、その中の Workers を使う。Worke
 
 ## 4. Secret
 
-Worker の **Settings** → **Variables and Secrets** で、種類は Secret にして次を置く。値は LINE のチャネル画面と、あとで届く未許可の返信から取る。
+Worker の **Settings** → **Variables and Secrets** で、種類は Secret にして次を置く。`CHANNEL_SECRET` と `CHANNEL_ACCESS_TOKEN` は LINE のチャネル画面から取る。`ADMIN_USER_ID` は、あとで届く未許可の返信から取る。`DEVICE_TOKEN` は自分で決める。
 
 | 名前 | 値 |
 | --- | --- |
 | `CHANNEL_SECRET` | チャネルシークレット |
 | `CHANNEL_ACCESS_TOKEN` | 長期のチャネルアクセストークン |
 | `ADMIN_USER_ID` | 管理者のユーザー ID |
+| `DEVICE_TOKEN` | 本体が付ける共有トークン |
 
 `ADMIN_USER_ID` は、未許可の返信の次の行に出る `U` で始まる 33 文字だけを入れる。前後の空白、改行、返信の文面は入れない。名前を `ALLOWED_USER_ID` にはしない。
 
@@ -59,7 +60,7 @@ Secret を保存したあとに出る **Deploy** を押す。コードだけ先�
 | `NotifyUsers` | `env.NotifyUsers` | `notify-on-user-ids` | 定期通知を ON にしたユーザー ID |
 | `History` | `env.History` | `measurements` | 測定履歴 |
 
-名前空間を作っただけでは読めない。`allowed-user-ids` と `notify-on-user-ids` は Worker が書く。手では入れない。`measurements` は、本体からの測定を足す処理が入るまで空のままである。
+名前空間を作っただけでは読めない。`allowed-user-ids` と `notify-on-user-ids` は Worker が書く。手では入れない。`measurements` は、このコードを Deploy して本体から測定が届くまで空のままである。
 
 コードを Deploy したあとは、Binding が外れていないかをこの画面で見る。外れていれば、同じ内容でもう一度追加する。
 
@@ -144,16 +145,17 @@ Secret は次のとおりである。
 - `CHANNEL_SECRET`。Webhook の署名検証に使う。
 - `CHANNEL_ACCESS_TOKEN`。LINE への返信に使う。
 - `ADMIN_USER_ID`。許可の追加と解除ができる管理者。許可リストに入っていなくても操作できる。
+- `DEVICE_TOKEN`。本体が `Authorization: Bearer` に付ける共有トークン。方式は [../../doc/04_detailed_design.md](../../doc/04_detailed_design.md) の 17.2 節。値は書かない。
 
 KV の `LineUsers` が持つのは、許可したユーザー ID だけである。管理者の `許可` で追加し、`許可解除` で外す。キーは `allowed-user-ids` である。定期通知も履歴も、この名前空間には置かない。
 
 定期通知は KV の `NotifyUsers` に置く。中身は ON にしたユーザー ID のリストである。キーは `notify-on-user-ids`。開始時刻は持たない。24 時間でリストを空にはしない。オンにした ID を足し、オフにした ID を外す。LINE でオンまたはオフにした返信では、本体のリセットを案内する。リセットまで、生存確認の有無と送り先は、直近の起動時に ON だった利用者のままである。
 
-履歴は KV の `History` から読む。キーは `measurements` で、JSON の配列である。1 件のプロパティは `humidity`、`temperature`、`humidityState`、`temperatureState`、`danger`、`at` である。`at` は日本時間で、ISO 8601 か `YYYY-MM-DD HH:mm:ss` である。「いまの状態」は最新 1 件を返す。本体の次の測定は待たない。履歴がなければ未取得とする。平均と詳細は直近 24 時間である。欠測はそのまま件数に表す。詳細は、その 24 時間に届いた記録を、1 回の送信（吹き出し 5 つまで、1 人 1 通）で送る。収まりきらないときは、新しい記録を優先し、溢れた旨を 1 行入れる。
+履歴は KV の `History` に置く。キーは `measurements` で、JSON の配列である。届いた測定を末尾へ足す。1008 件を超えた分は古いものから捨てる。1 件のプロパティは `at`、`temperature`、`humidity`、`temperatureState`、`humidityState`、`danger` である。`at` は中継が受けた日本時間で、ISO 8601 か `YYYY-MM-DD HH:mm:ss` である。`notify` と `periodic` は残さない。「いまの状態」は最新 1 件を返す。本体の次の測定は待たない。履歴がなければ未取得とする。平均と詳細は直近 24 時間である。欠測はそのまま件数に表す。詳細は、その 24 時間に届いた記録を、1 回の送信（吹き出し 5 つまで、1 人 1 通）で送る。収まりきらないときは、新しい記録を優先し、溢れた旨を 1 行入れる。
 
-まだ置いていないものは、次のとおりである。
+まだ本番へ出していないものは、次のとおりである。
 
-届いた測定を履歴へ足す処理。通信できなかった期間は欠測のままにする。日付と時間は、サーバーが届いた時刻を日本時間にしたものとし、STM32 の RTC は使わない。1 つの値は 25MiB 未満に保つ。古い測定から捨て、`LineUsers` への許可の追加が失敗しない空きを残す。電源投入またはリセットのあと、本体が時刻と通知モードをまだ受け取っていないあいだの操作取得の応答に、中継の現在時刻（日本時間）と、誰か定期通知が ON かを載せる。
+`index.js` に、届いた測定を履歴へ足す処理と、起動時の操作取得がある。ダッシュボードへ貼って Deploy するまで、本番の `measurements` は空のままである。通信できなかった期間は欠測のままにする。日付と時間は、サーバーが届いた時刻を日本時間にしたものとし、STM32 の RTC は使わない。1008 件を超えた分は古い測定から捨て、1 つの値は 25MiB 未満に保つ。`LineUsers` への許可の追加が失敗しない空きを残す。`boot=1` の操作取得では、日本時間と `notifyMode` を返す。`notifyMode` が 1 のとき、その時点で ON のユーザー ID を次の起動まで定期通知の送り先として覚える。
 
 持たないものは、次のとおりである。
 
@@ -162,7 +164,7 @@ KV の `LineUsers` が持つのは、許可したユーザー ID だけである
 - 日時設定。LINE の項目、コマンド、KV には置かない。起動時に返す現在時刻は、この KV には残さない。
 - Wi-Fi の SSID とパスワード。
 
-本体との認証情報は Secret に置く。方式は未決定である。
+本体との認証は Secret `DEVICE_TOKEN` である。方式は [../../doc/04_detailed_design.md](../../doc/04_detailed_design.md) の 17.2 節である。値はリポジトリに書かない。
 
 ---
 
@@ -171,14 +173,14 @@ KV の `LineUsers` が持つのは、許可したユーザー ID だけである
 STM32 の回路やセンサーの未決定は [../../doc/04_detailed_design.md](../../doc/04_detailed_design.md) の32章に残す。ここには中継と LINE に関するものだけを書く。
 
 - 生存確認は、起動時に ON だった利用者へ 60 分ごとに push する。24 時間で自動オフはしない。オンのままなら 1 人あたり 1 日 24 通で、月 200 通の無料枠は約 8 日で尽きる。異常通知と操作の返答も push で、この通数に加わる。通数の詳細は [../../doc/05_relay_server.md](../../doc/05_relay_server.md) の 7 節である。
-- 環境異常の送り先は未決定である。操作の返答は、未処理操作に残す依頼者のユーザー ID へ push する。生存確認は、直近の起動時に ON だった利用者へ送る。LINE で切り替えた送り先は、次のリセットまで使わない。
-- 搭載済みの AT ファームから `workers.dev` へ `AT+HTTPCLIENT` で HTTPS できるかは未確認である。署名検証と LINE への応答が無料プランの CPU 10ms に収まるかも未確認である。
+- 環境異常は、測定の `notify` が 1 のとき、許可済みユーザーと管理者の全員へ送る。操作の返答は、未処理操作に残す依頼者のユーザー ID へ push する。生存確認は、`periodic` が 1 で `notify` が 0 のとき、直近の起動時に ON だった利用者へ送る。送り先の判断は中継が行う。LINE で切り替えた送り先は、次のリセットまで使わない。
+- 搭載済みの AT ファームから `workers.dev` へ `AT+HTTPCPOST` で HTTPS できるかは未確認である。署名検証と LINE への応答が無料プランの CPU 10ms に収まるかも未確認である。
 - LINE 通信失敗時の再送回数と間隔、詳細ログを分割するときのメッセージサイズと送信間隔は未決定である。
 
 ---
 
 ## 13. 残る作業
 
-- 起動時の操作取得の応答で、誰か定期通知が ON かだけを本体に返す。ON の一覧は `NotifyUsers` にある。利用者の ID 一覧は渡さない。
-- 届いた測定を `History` の `measurements` に足す。日付と時間は、サーバーが届いた時刻を日本時間にしたものとする。通信できなかった期間は欠測のままである。1 つの値は 25MiB 未満に保ち、古い測定から捨て、`LineUsers` への許可の追加が失敗しない空きを残す。
-- 本体が約 10 分周期で測定を送り、中継が履歴へ足してから LINE へ push する HTTPS を足す。パス、本文、本体認証が決まってから書く。認証情報は Secret に置き、リポジトリには書かない。起動後、本体が時刻と通知モードを受け取るまでの操作取得の応答に、現在の日本時間と、誰か定期通知が ON かを含める。
+- `index.js` の `/v1/ops` と `/v1/measurements` をダッシュボードへ貼って Deploy する。`DEVICE_TOKEN` を Secret に置く。本体の `RELAY_HOST` と `DEVICE_TOKEN` は `wifi_secret.h` に書き、リポジトリには入れない。
+- 起動時の `boot=1` で `time` と `notifyMode` を返す。`notifyMode` が 1 のとき、その時点の ON のユーザー ID を次の起動まで送り先として覚える。
+- 届いた測定を `History` の `measurements` に足す。1 件は `at`、`temperature`、`humidity`、`temperatureState`、`humidityState`、`danger` である。1008 件を超えた分は古い測定から捨てる。`notify` が 1 のときは許可済みユーザーと管理者の全員へ push する。`periodic` が 1 で `notify` が 0 のときは、起動時に ON だった利用者へ push する。ダミー取得でも同じ送信をする。

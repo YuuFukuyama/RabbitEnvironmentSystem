@@ -39,7 +39,7 @@
 #define WARNING_REPEAT_SEC       ENV_SCALE_SEC(30U * 60U)
 #define DANGER_NOTIFY_SEC        ENV_SCALE_SEC(20U * 60U)
 #define DANGER_ESCALATION_SEC    ENV_SCALE_SEC(30U * 60U)
-/* 生存確認は測定周期の6回、60分。STM32は利用者を持たず、誰かONのときだけ載せる。その判定は集約フラグの通信が決まってから。 */
+/* 生存確認は測定周期の 6 回ごと。載せるかは起動時の notifyMode が ON のときだけ。 */
 #define HEARTBEAT_SEC            (6U * MEASURE_INTERVAL_SEC)
 #define HEARTBEAT_ENABLE         1
 
