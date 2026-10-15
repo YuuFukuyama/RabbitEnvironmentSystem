@@ -9,17 +9,14 @@
 
 #define APP_NOTE_CAP 3U
 
-/* つながっていれば AP から外す。切れたときだけアンテナを消す。 */
-static void app_drop_wifi(I2C_HandleTypeDef *hi2c, uint8_t wifi_up)
+/* つながっていれば AP から外す。 */
+static void app_drop_wifi(uint8_t wifi_up)
 {
   if (wifi_up == 0U)
   {
     return;
   }
-  if (At_Disconnect() == HAL_OK)
-  {
-    (void)LcdStatus_ShowWifi(hi2c, 0U);
-  }
+  (void)At_Disconnect();
 }
 
 void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
@@ -42,7 +39,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   wifi_up = 0U;
   judge_sec = now_sec;
 
-  /* AT と Wi-Fi の確認。接続中だけアンテナを点ける。失敗しても測定は続ける。 */
+  /* AT と Wi-Fi の確認。つながらなければアンテナを消す。失敗しても測定は続ける。 */
   if (At_Probe() == HAL_OK)
   {
     (void)LcdStatus_ShowWifi(hi2c, 1U);
@@ -72,7 +69,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   if (EnvJudge_HasValue() == 0U)
   {
     EnvJudge_CommitSend(0U);
-    app_drop_wifi(hi2c, wifi_up);
+    app_drop_wifi(wifi_up);
     return;
   }
 
@@ -85,7 +82,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
     }
     EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
     EnvJudge_NoteWifi(wifi_failed);
-    app_drop_wifi(hi2c, wifi_up);
+    app_drop_wifi(wifi_up);
     return;
   }
 
@@ -101,5 +98,5 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   {
     EnvJudge_NoteWifi(wifi_failed);
   }
-  app_drop_wifi(hi2c, wifi_up);
+  app_drop_wifi(wifi_up);
 }
