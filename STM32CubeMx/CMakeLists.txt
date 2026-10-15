@@ -42,6 +42,14 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
+# テストでダミーシナリオに戻すときは -DENV_SENSOR_USE_DUMMY=ON にする。既定は本番取得。
+option(ENV_SENSOR_USE_DUMMY "温湿度をダミーシナリオで読む" OFF)
+if(ENV_SENSOR_USE_DUMMY)
+    set(ENV_SENSOR_SOURCE App/env_dummy.c)
+else()
+    set(ENV_SENSOR_SOURCE App/env_sht31.c)
+endif()
+
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
@@ -51,8 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/app_cycle.c
     App/at_cmd.c
     App/relay_client.c
-    # 温湿度基板が来たら env_dummy.c を本番取得へ差し替え、ENV_SENSOR_USE_DUMMY を外す
-    App/env_dummy.c
+    ${ENV_SENSOR_SOURCE}
     # Wi-Fi 基板が来たら wifi_dummy.c を本番送信へ差し替え、WIFI_USE_DUMMY を外す
     App/wifi_dummy.c
 )
@@ -66,8 +73,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
-    ENV_SENSOR_USE_DUMMY
     WIFI_USE_DUMMY
+    $<$<BOOL:${ENV_SENSOR_USE_DUMMY}>:ENV_SENSOR_USE_DUMMY>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

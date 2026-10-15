@@ -22,12 +22,8 @@
 
 #define SPEC_MEASURE_INTERVAL_SEC 600U
 
-/* ダミー取得のあいだは周期を縮める。定義を外すと 10 分になる。 */
-#if defined(ENV_SENSOR_USE_DUMMY)
+/* 詳細設計の周期は 10 分。動作確認中の測定間隔は 10 秒のままにする。 */
 #define MEASURE_INTERVAL_SEC 10U
-#else
-#define MEASURE_INTERVAL_SEC 600U
-#endif
 
 /* 詳細設計の分数を、10 分周期の測定回数と同じになる秒数へ換算する。 */
 #define ENV_SCALE_SEC(spec_sec) \

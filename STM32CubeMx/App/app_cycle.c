@@ -1,4 +1,4 @@
-/* 取得、判定、LCD 更新、起動時の操作取得、測定の送信を 1 回行う。 */
+/* 取得、判定、LCD 更新、起動時の操作取得、測定の送信を 1 回行い、つながっていれば AP を切る。 */
 
 #include "app_cycle.h"
 #include "at_cmd.h"
@@ -8,6 +8,19 @@
 #include "relay_client.h"
 
 #define APP_NOTE_CAP 3U
+
+/* つながっていれば AP から外す。切れたときだけアンテナを消す。 */
+static void app_drop_wifi(I2C_HandleTypeDef *hi2c, uint8_t wifi_up)
+{
+  if (wifi_up == 0U)
+  {
+    return;
+  }
+  if (At_Disconnect() == HAL_OK)
+  {
+    (void)LcdStatus_ShowWifi(hi2c, 0U);
+  }
+}
 
 void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
 {
@@ -49,11 +62,8 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
     }
   }
 
-  /* 通信失敗は 1 回だけ取り直す。ダミーの失敗行もこの 2 回で 1 件進む。 */
-  if (EnvSensor_Read(&reading) != HAL_OK)
-  {
-    (void)EnvSensor_Read(&reading);
-  }
+  /* 失敗時の取り直しは取得側で 1 回行う。 */
+  (void)EnvSensor_Read(hi2c, &reading);
 
   EnvJudge_Apply(&reading, judge_sec, &view, notes, &note_count, APP_NOTE_CAP);
   (void)LcdStatus_Show(hi2c, &view);
@@ -62,10 +72,11 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   if (EnvJudge_HasValue() == 0U)
   {
     EnvJudge_CommitSend(0U);
+    app_drop_wifi(hi2c, wifi_up);
     return;
   }
 
-  /* ダミー取得でも、中継の設定があれば測定を毎回送る。 */
+  /* 中継の設定があれば測定を毎回送る。 */
   if (Relay_Enabled() != 0U)
   {
     if ((wifi_up == 0U) || (Relay_Post(notes, note_count) != HAL_OK))
@@ -74,6 +85,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
     }
     EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
     EnvJudge_NoteWifi(wifi_failed);
+    app_drop_wifi(hi2c, wifi_up);
     return;
   }
 
@@ -89,4 +101,5 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   {
     EnvJudge_NoteWifi(wifi_failed);
   }
+  app_drop_wifi(hi2c, wifi_up);
 }

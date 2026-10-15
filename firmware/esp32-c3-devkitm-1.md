@@ -220,10 +220,12 @@ OK
 | 版の確認 | `AT+GMR` | `Bin version` に `MINI-1`、末尾 `OK` |
 | ステーションモード | `AT+CWMODE=1` | `OK` |
 | AP へ接続 | `AT+CWJAP="<ssid>","<password>"` | `WIFI CONNECTED`、`WIFI GOT IP`、`OK` |
+| 再接続を止める | `AT+CWRECONNCFG=0,0` | `OK` |
+| AP から外れる | `AT+CWQAP` | `OK`。`WIFI DISCONNECT` が続くことがある |
 | 切断の通知 | なし（自発） | `WIFI DISCONNECT` |
 | HTTPS | TCP-IP の SSL、または HTTP コマンド | コマンドごとの `OK` / `ERROR` |
 
-`AT+CWJAP` は引数によって接続情報をフラッシュへ残す。自動再接続は `AT+CWAUTOCONN?` で確認する。パスワードをコマンドに書くため、ログ用 UART0 を常時 PC へ繋いだままにしない。
+`AT+CWJAP` は引数によって接続情報をフラッシュへ残す。再接続間隔を省略すると v3.3.0.0 では 1 秒で戻り直す。周期の終わりに STM32 は `AT+CWRECONNCFG=0,0` を書いてから `AT+CWQAP` を送る。電源投入時の自動接続は `AT+CWAUTOCONN?` で確認する。パスワードをコマンドに書くため、ログ用 UART0 を常時 PC へ繋いだままにしない。
 
 ## このリポジトリでの割り当て
 

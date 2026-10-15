@@ -524,3 +524,12 @@ HAL_StatusTypeDef At_Probe(void)
   }
   return at_wifi();
 }
+
+HAL_StatusTypeDef At_Disconnect(void)
+{
+  if (at_command("AT+CWRECONNCFG=0,0", NULL, AT_RSP_TIMEOUT_MS) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+  return at_command("AT+CWQAP", NULL, AT_RSP_TIMEOUT_MS);
+}

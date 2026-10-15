@@ -8,6 +8,9 @@
 /* AT、AT+GMR、未接続なら Wi-Fi 参加を行う。失敗しても周期は止めない。 */
 HAL_StatusTypeDef At_Probe(void);
 
+/* 再接続を止めてから AP を切る。失敗しても周期は止めない。 */
+HAL_StatusTypeDef At_Disconnect(void);
+
 /* 以降の HTTP に Authorization と Content-Type を付ける。 */
 HAL_StatusTypeDef At_HttpAuth(const char *token);
 

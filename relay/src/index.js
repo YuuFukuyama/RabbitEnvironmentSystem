@@ -380,8 +380,8 @@ async function currentStateMessage(env, userId) {
       `温度：${formatValue(latest.temperature)}℃`,
       `湿度：${formatValue(latest.humidity)}%`,
       "",
-      `温度の状態：${latest.temperatureState ?? ""}`,
-      `湿度の状態：${latest.humidityState ?? ""}`,
+      `温度の状態：${TEMP_LABEL[latest.temperatureState] ?? ""}`,
+      `湿度の状態：${HUM_LABEL[latest.humidityState] ?? ""}`,
       `日時：${formatJapanTime(latest.at)}`,
       notifyLine,
     ].join("\n"),
@@ -464,8 +464,8 @@ function recordBlock(row) {
     `危険度：${dangerText(row.danger)}`,
     `温度：${formatValue(row.temperature)}℃`,
     `湿度：${formatValue(row.humidity)}%`,
-    `温度の状態：${row.temperatureState ?? ""}`,
-    `湿度の状態：${row.humidityState ?? ""}`,
+    `温度の状態：${TEMP_LABEL[row.temperatureState] ?? ""}`,
+    `湿度の状態：${HUM_LABEL[row.humidityState] ?? ""}`,
   ].join("\n");
 }
 
@@ -594,10 +594,9 @@ function parseAt(at) {
   return Date.parse(at);
 }
 
-// 危険度を仕様の括弧付きで返す。
+// 危険度の日本語名を返す。
 function dangerText(danger) {
-  const label = DANGER_LABEL[danger];
-  return label ? `${danger}（${label}）` : String(danger ?? "");
+  return DANGER_LABEL[danger] ?? String(danger ?? "");
 }
 
 // 温度と湿度を小数1桁にする。

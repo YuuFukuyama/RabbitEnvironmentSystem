@@ -23,7 +23,7 @@ typedef struct
 #define S7(temp_deci, hum_deci) S5(temp_deci, hum_deci), S2(temp_deci, hum_deci)
 #define F3() F(), F(), F()
 
-/* 測定ごとに 1 行進み、末尾の次は先頭に戻る。失敗行は再取得でも失敗させる。 */
+/* 測定ごとに 1 行進み、末尾の次は先頭に戻る。失敗行はその周期を失敗にする。 */
 static const EnvDummyStep env_dummy_steps[] =
 {
   /* 正常値が一度もない取得失敗 */
@@ -82,8 +82,6 @@ _Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 100U,
 
 /* シナリオの現在位置。末尾の次は 0 に戻る。 */
 static uint8_t step_index;
-/* 失敗行の再取得待ち。1 のとき次の読み出しで行を進める。 */
-static uint8_t retry_pending;
 
 /* シナリオ位置を 1 つ進める。 */
 static void advance_step(void)
@@ -95,30 +93,22 @@ static void advance_step(void)
   }
 }
 
-HAL_StatusTypeDef EnvSensor_Read(EnvReading *reading)
+HAL_StatusTypeDef EnvSensor_Read(I2C_HandleTypeDef *hi2c, EnvReading *reading)
 {
   const EnvDummyStep *step;
+
+  /* ダミーはバスを使わない。 */
+  (void)hi2c;
 
   if (reading == NULL)
   {
     return HAL_ERROR;
   }
 
-  /* 失敗行の 1 回目は行を進めない。再取得で同じ行を失敗させ、そこで次へ進む。 */
-  if (retry_pending != 0U)
-  {
-    retry_pending = 0U;
-    reading->temp_deci_c = 0;
-    reading->hum_deci_rh = 0;
-    reading->ok = 0U;
-    advance_step();
-    return HAL_ERROR;
-  }
-
   step = &env_dummy_steps[step_index];
+  advance_step();
   if (step->fail != 0U)
   {
-    retry_pending = 1U;
     reading->temp_deci_c = 0;
     reading->hum_deci_rh = 0;
     reading->ok = 0U;
@@ -128,6 +118,5 @@ HAL_StatusTypeDef EnvSensor_Read(EnvReading *reading)
   reading->temp_deci_c = step->temp_deci_c;
   reading->hum_deci_rh = step->hum_deci_rh;
   reading->ok = 1U;
-  advance_step();
   return HAL_OK;
 }
