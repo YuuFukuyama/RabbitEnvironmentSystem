@@ -22,7 +22,7 @@ alwaysApply: true
 - LED: PA15 出力。ラベルは `LED_Pin` / `LED_GPIO_Port`（`main.h`）。JTAG は無効（SWD は PA13/PA14 のまま）。
 - ヒープ `0x200`、スタック `0x400`。大きな静的バッファやヒープ確保を足す前に容量を確認する。
 - 温湿度の既定は GY-SHT31-D の単発測定。テスト用のダミーシナリオは `ENV_SENSOR_USE_DUMMY` を ON にしたときだけ使う。Wi-Fi 送信は基板が無い間ダミー（`WIFI_USE_DUMMY`）。LCD（ST7032、I2C）は本番の表示を行う。
-- `main` のループは温湿度を測定し、LCD を更新してから次周期まで待つ。周期は動作確認のため 10 秒（`MEASURE_INTERVAL_SEC`）。詳細設計の 10 分にはまだしない。RTC が使えればアラームで STOP から復帰し、使えなければ `HAL_Delay` で待つ。測定のたびに `LED` をトグルする。
+- `main` のループは温湿度を測定し、LCD を更新してから次周期まで待つ。周期は 10 分（`MEASURE_INTERVAL_SEC`）。RTC が使えればアラームで STOP から復帰し、使えなければ `HAL_Delay` で待つ。測定のたびに `LED` をトグルする。
 
 HAL の初期化が失敗したら `Error_Handler()` に渡す。`Error_Handler` は割り込みを止めて無限ループする。測定中のセンサー通信失敗は `Error_Handler` にせず、センサー異常として測定を続ける。
 
