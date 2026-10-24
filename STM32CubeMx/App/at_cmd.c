@@ -370,6 +370,35 @@ static void boot_merge_http_payload(void)
       }
     }
   }
+  {
+    const char *start;
+    const char *end;
+    uint32_t len;
+
+    if (strchr((char *)boot_payload, '{') != NULL &&
+        strstr((char *)boot_payload, "\"time\":\"") != NULL)
+    {
+      return;
+    }
+    start = strchr(rx, '{');
+    if (start == NULL)
+    {
+      return;
+    }
+    end = strrchr(rx, '}');
+    if ((end == NULL) || (end <= start))
+    {
+      return;
+    }
+    len = (uint32_t)(end - start + 1U);
+    if (len >= AT_BOOT_PAYLOAD_MAX)
+    {
+      len = AT_BOOT_PAYLOAD_MAX - 1U;
+    }
+    memcpy(boot_payload, start, len);
+    boot_payload_len = (uint16_t)len;
+    boot_payload[len] = 0U;
+  }
 }
 
 /* time 探索は連結後を優先する。 */
