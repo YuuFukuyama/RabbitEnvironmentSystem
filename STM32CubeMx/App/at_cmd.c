@@ -363,6 +363,20 @@ static const char *boot_find_http_urc(const char *cursor)
   return NULL;
 }
 
+/* URC 行の +HTTPCLIENT: / +HTTPCGET: 以降のオフセット。 */
+static uint8_t boot_urc_prefix_len(const char *line)
+{
+  if (strncmp(line, "+HTTPCLIENT:", 12) == 0)
+  {
+    return 12U;
+  }
+  if (strncmp(line, "+HTTPCGET:", 10) == 0)
+  {
+    return 10U;
+  }
+  return 1U;
+}
+
 /* CSV 本文の先頭。 */
 static const char *boot_csv_start(const char *text)
 {
@@ -457,10 +471,11 @@ static void boot_payload_finalize_json(void)
   }
 }
 
-/* cursor から最大 nbytes を payload へ足す。改行はサイズに含めない。 */
+/* cursor から最大 nbytes を payload へ足す。数字とカンマのみ。改行はサイズに含めない。 */
 static void boot_payload_append_bytes(const char **cursor, uint32_t nbytes, const char *rx_end)
 {
   uint32_t copied;
+  char ch;
 
   if ((cursor == NULL) || (*cursor == NULL) || (rx_end == NULL) || (nbytes == 0U))
   {
@@ -469,16 +484,26 @@ static void boot_payload_append_bytes(const char **cursor, uint32_t nbytes, cons
   copied = 0U;
   while ((copied < nbytes) && (*cursor < rx_end) && (**cursor != '\0'))
   {
-    if ((**cursor == '\r') || (**cursor == '\n'))
+    ch = **cursor;
+    if ((ch == '\r') || (ch == '\n'))
     {
       (*cursor)++;
       continue;
+    }
+    if ((ch < '0') || (ch > '9'))
+    {
+      if (ch != ',')
+      {
+        (*cursor)++;
+        copied++;
+        continue;
+      }
     }
     if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
     {
       break;
     }
-    boot_payload[boot_payload_len] = (uint8_t)(**cursor);
+    boot_payload[boot_payload_len] = (uint8_t)ch;
     boot_payload_len++;
     (*cursor)++;
     copied++;
@@ -520,6 +545,10 @@ static void boot_payload_append_urc_line(const char *line, const char *rx_end)
   if ((mark < rx_end) && (mark[0] == ','))
   {
     chunk = mark + 1;
+    if ((chunk[0] < '0') || (chunk[0] > '9'))
+    {
+      return;
+    }
     if (size > 0U)
     {
       boot_payload_append_bytes(&chunk, size, rx_end);
@@ -527,12 +556,15 @@ static void boot_payload_append_urc_line(const char *line, const char *rx_end)
     }
     while ((chunk < rx_end) && (chunk[0] != '\0') && (chunk[0] != '\r') && (chunk[0] != '\n'))
     {
-      if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+      if (((chunk[0] >= '0') && (chunk[0] <= '9')) || (chunk[0] == ','))
       {
-        break;
+        if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+        {
+          break;
+        }
+        boot_payload[boot_payload_len] = (uint8_t)chunk[0];
+        boot_payload_len++;
       }
-      boot_payload[boot_payload_len] = (uint8_t)chunk[0];
-      boot_payload_len++;
       chunk++;
     }
     boot_payload[boot_payload_len] = 0U;
@@ -564,7 +596,7 @@ static void boot_merge_http_payload(void)
       break;
     }
     boot_payload_append_urc_line(line, rx_end);
-    cursor = line + 12U;
+    cursor = line + boot_urc_prefix_len(line);
     while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\n'))
     {
       cursor++;
