@@ -320,7 +320,11 @@ static uint8_t classify_boot_rx(void)
   {
     return APP_CLOCK_BOOT_DIAG_EMPTY;
   }
-  client = strstr(rx, "+HTTPCLIENT");
+  client = strstr(rx, "+HTTPCGET");
+  if (client == NULL)
+  {
+    client = strstr(rx, "+HTTPCLIENT");
+  }
   if (client != NULL)
   {
     if (strstr(rx, "\"time\":\"") != NULL)
@@ -381,11 +385,13 @@ static uint8_t at_rx_has_boot_json(void)
   return 1U;
 }
 
-/* boot GET の本文が at_rx に載るまで待つ。 */
+/* boot GET の本文が at_rx に載るまで待つ。複数行の +HTTPCLIENT も読む。 */
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
+  uint8_t saw_http;
 
+  saw_http = 0U;
   t0 = HAL_GetTick();
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
@@ -398,9 +404,18 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
+    if ((strstr((char *)at_rx, "+HTTPCLIENT") != NULL) ||
+        (strstr((char *)at_rx, "+HTTPCGET") != NULL))
+    {
+      saw_http = 1U;
+    }
     if (at_rx_has_boot_json() != 0U)
     {
       return HAL_OK;
+    }
+    if ((saw_http != 0U) && (strstr((char *)at_rx, "\r\nOK") != NULL))
+    {
+      break;
     }
   }
   if (at_rx_has_boot_json() != 0U)
@@ -594,28 +609,37 @@ HAL_StatusTypeDef At_HttpGet(const char *url)
   return at_command_mark((char *)at_tx, "OK", AT_HTTP_TIMEOUT_MS);
 }
 
-HAL_StatusTypeDef At_HttpGetBoot(const char *url)
+HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
 {
   uint16_t n;
   uint16_t got;
   uint32_t len;
   uint8_t line[AT_CMD_MAX + 3U];
 
-  if ((url == NULL) || (url[0] == '\0'))
+  if ((host == NULL) || (host[0] == '\0') || (path == NULL) || (path[0] != '/'))
   {
     return HAL_ERROR;
   }
   n = 0U;
   at_tx[0] = 0U;
-  if (at_put_raw(&n, "AT+HTTPCLIENT=2,1,\"") == 0U)
+  /* url を空にし path へ boot=1 を載せる。一体 URL だとクエリが落ちることがある。 */
+  if (at_put_raw(&n, "AT+HTTPCLIENT=2,1,\"\",\"") == 0U)
   {
     return HAL_ERROR;
   }
-  if (at_put_raw(&n, url) == 0U)
+  if (at_put_raw(&n, host) == 0U)
   {
     return HAL_ERROR;
   }
-  if (at_put_raw(&n, "\",,,2") == 0U)
+  if (at_put_raw(&n, "\",\"") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, path) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, "\",2") == 0U)
   {
     return HAL_ERROR;
   }

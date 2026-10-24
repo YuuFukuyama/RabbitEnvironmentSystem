@@ -197,7 +197,6 @@ static uint8_t parse_mode(const char *body, uint8_t *mode)
 
 uint8_t Relay_TakeBoot(uint32_t *synced_sec)
 {
-  char url[128];
   const char *body;
   const char *time_mark;
   uint8_t mode;
@@ -208,16 +207,12 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     return 0U;
   }
-  if (build_url(url, sizeof(url), "/v1/ops?boot=1") == 0U)
-  {
-    return 0U;
-  }
   if (At_HttpAuth(DEVICE_TOKEN) != HAL_OK)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_AUTH);
     return 0U;
   }
-  if (At_HttpGetBoot(url) != HAL_OK)
+  if (At_HttpGetBoot(RELAY_HOST, "/v1/ops?boot=1") != HAL_OK)
   {
     AppClock_SetBootDiag(At_HttpBootRxDiag());
     return 0U;

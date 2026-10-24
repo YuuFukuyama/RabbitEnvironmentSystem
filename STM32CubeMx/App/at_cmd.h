@@ -17,8 +17,8 @@ HAL_StatusTypeDef At_HttpAuth(const char *token);
 /* HTTPS GET を行い、応答を At_HttpResponse に残す。 */
 HAL_StatusTypeDef At_HttpGet(const char *url);
 
-/* 起動時 ops 用 GET。JSON が at_rx に載るまで待つ。 */
-HAL_StatusTypeDef At_HttpGetBoot(const char *url);
+/* 起動時 ops 用 GET。path にクエリを含めて host と分ける。 */
+HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path);
 
 /* boot GET 失敗時の at_rx 分類。AppClock_SetBootDiag に渡す。 */
 uint8_t At_HttpBootRxDiag(void);
