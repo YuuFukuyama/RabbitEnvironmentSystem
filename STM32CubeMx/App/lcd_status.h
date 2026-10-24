@@ -12,4 +12,7 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view);
 /* 接続できたときはアンテナ S1 を点ける。接続できなかったときは消す。 */
 HAL_StatusTypeDef LcdStatus_ShowWifi(I2C_HandleTypeDef *hi2c, uint8_t connected);
 
+/* boot GET でパースした暦と CSV 先頭を 2 行で出す。 */
+HAL_StatusTypeDef LcdStatus_ShowBootFetch(I2C_HandleTypeDef *hi2c);
+
 #endif

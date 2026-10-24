@@ -459,6 +459,97 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
   return write_line(hi2c, LCD_LINE1, line1);
 }
 
+/* boot 取得暦と CSV 先頭を 2 行に組み立てる。 */
+static void build_boot_fetch_lines(char *line0, char *line1)
+{
+  uint8_t parsed_ok;
+  uint8_t rtc_ok;
+  uint16_t year;
+  uint8_t month;
+  uint8_t day;
+  uint8_t hour;
+  uint8_t minute;
+  uint8_t notify_mode;
+  uint16_t rx_got;
+  uint16_t payload_len;
+  char preview[17];
+  uint8_t boot_diag;
+  uint8_t pos;
+  uint8_t year2;
+
+  AppClock_ReadBootFetch(&parsed_ok, &rtc_ok, &year, &month, &day, &hour, &minute, &notify_mode,
+                         &rx_got, &payload_len, preview, (uint8_t)sizeof(preview));
+  boot_diag = AppClock_GetBootDiag();
+  pos = 0U;
+  if (parsed_ok != 0U)
+  {
+    if (year >= 2000U)
+    {
+      year2 = (uint8_t)(year - 2000U);
+    }
+    else
+    {
+      year2 = (uint8_t)year;
+    }
+    pos = append_u8_2d(line0, pos, year2);
+    pos = copy_text(line0, pos, "/");
+    pos = append_u8_2d(line0, pos, month);
+    pos = copy_text(line0, pos, "/");
+    pos = append_u8_2d(line0, pos, day);
+    pos = copy_text(line0, pos, " ");
+    pos = append_u8_2d(line0, pos, hour);
+    pos = copy_text(line0, pos, ":");
+    pos = append_u8_2d(line0, pos, minute);
+    if (rtc_ok == 0U)
+    {
+      pos = copy_text(line0, pos, "!");
+    }
+  }
+  else
+  {
+    pos = copy_text(line0, pos, clock_diag_hhmm(boot_diag));
+  }
+  finish_line(line0, pos);
+
+  pos = 0U;
+  if (preview[0] != '\0')
+  {
+    pos = copy_text(line1, pos, preview);
+  }
+  if (pos < (LCD_COLS - 4U))
+  {
+    pos = copy_text(line1, pos, " p");
+    pos = append_u16(line1, pos, payload_len);
+  }
+  finish_line(line1, pos);
+  (void)rx_got;
+  (void)notify_mode;
+}
+
+HAL_StatusTypeDef LcdStatus_ShowBootFetch(I2C_HandleTypeDef *hi2c)
+{
+  char line0[LCD_COLS + 1U];
+  char line1[LCD_COLS + 1U];
+  HAL_StatusTypeDef status;
+
+  if (hi2c == NULL)
+  {
+    return HAL_ERROR;
+  }
+  build_boot_fetch_lines(line0, line1);
+  status = ST7032_SetIconS56(hi2c, (AppClock_GetBootDiag() != APP_CLOCK_BOOT_DIAG_NONE) ? 1U : 0U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = write_line(hi2c, LCD_LINE0, line0);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  return write_line(hi2c, LCD_LINE1, line1);
+}
+
 HAL_StatusTypeDef LcdStatus_ShowWifi(I2C_HandleTypeDef *hi2c, uint8_t connected)
 {
   if (hi2c == NULL)

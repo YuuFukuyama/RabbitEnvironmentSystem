@@ -54,4 +54,15 @@ uint8_t AppClock_HwReady(void);
 /* 同期済みなら valid=1 で月日時分を返す。 */
 void AppClock_Read(uint8_t *valid, uint8_t *mon, uint8_t *day, uint8_t *hour, uint8_t *min);
 
+/* boot GET でパースした暦。LCD 確認用。 */
+void AppClock_SetBootFetch(uint8_t parsed_ok, uint8_t rtc_ok, uint16_t year, uint8_t month,
+                           uint8_t day, uint8_t hour, uint8_t minute, uint8_t notify_mode,
+                           uint16_t rx_got, uint16_t payload_len, const char *csv_preview);
+
+/* 直近の boot 取得結果を読む。 */
+void AppClock_ReadBootFetch(uint8_t *parsed_ok, uint8_t *rtc_ok, uint16_t *year, uint8_t *month,
+                            uint8_t *day, uint8_t *hour, uint8_t *minute, uint8_t *notify_mode,
+                            uint16_t *rx_got, uint16_t *payload_len, char *csv_preview,
+                            uint8_t preview_cap);
+
 #endif

@@ -387,6 +387,48 @@ static uint8_t parse_mode(const char *body, uint8_t *mode)
   return 1U;
 }
 
+/* GET 本文と UART スナップを LCD 用に保存する。 */
+static void boot_fetch_store(const char *body, uint8_t parsed_ok, uint8_t rtc_ok, uint16_t year,
+                             uint8_t month, uint8_t day, uint8_t hour, uint8_t minute,
+                             uint8_t notify_mode)
+{
+  uint16_t rx_got;
+  uint16_t payload_len;
+
+  rx_got = 0U;
+  payload_len = 0U;
+  if (AppClock_BootSnapValid() != 0U)
+  {
+    AppClock_ReadBootSnap(&rx_got, &payload_len, NULL, NULL);
+  }
+  AppClock_SetBootFetch(parsed_ok, rtc_ok, year, month, day, hour, minute, notify_mode, rx_got,
+                        payload_len, body);
+}
+
+/* 本文をパースして boot 取得結果を保存する。 */
+static void boot_fetch_from_body(const char *body, uint8_t rtc_ok)
+{
+  uint16_t year;
+  uint16_t month;
+  uint16_t day;
+  uint16_t hour;
+  uint16_t minute;
+  uint8_t mode;
+
+  if (body == NULL)
+  {
+    boot_fetch_store(NULL, 0U, rtc_ok, 0U, 0U, 0U, 0U, 0U, 0U);
+    return;
+  }
+  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
+  {
+    boot_fetch_store(body, 1U, rtc_ok, year, (uint8_t)month, (uint8_t)day, (uint8_t)hour,
+                     (uint8_t)minute, mode);
+    return;
+  }
+  boot_fetch_store(body, 0U, rtc_ok, 0U, 0U, 0U, 0U, 0U, 0U);
+}
+
 uint8_t Relay_TakeBoot(uint32_t *synced_sec)
 {
   const char *body;
@@ -401,17 +443,20 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   if (At_HttpAuthBoot(DEVICE_TOKEN) != HAL_OK)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_AUTH);
+    boot_fetch_store(NULL, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U);
     return 0U;
   }
   if (At_HttpGetBoot(RELAY_HOST, "/v1/ops") != HAL_OK)
   {
     AppClock_SetBootDiag(At_HttpBootRxDiag());
+    boot_fetch_from_body(At_HttpBootBody(), 0U);
     return 0U;
   }
   body = At_HttpBootBody();
   if (parse_mode(body, &mode) == 0U)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
+    boot_fetch_from_body(body, 0U);
     return 0U;
   }
   if (hrtc.Instance == RTC)
@@ -432,8 +477,10 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
     {
       AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_RTC);
     }
+    boot_fetch_from_body(body, 0U);
     return 0U;
   }
+  boot_fetch_from_body(body, 1U);
   AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_NONE);
   AppClock_MarkSynced();
   new_sec = read_counter();

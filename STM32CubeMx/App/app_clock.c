@@ -3,6 +3,7 @@
 #include "app_clock.h"
 #include "stm32f1xx_hal.h"
 #include "stm32f1xx_hal_rtc_ex.h"
+#include <string.h>
 
 extern RTC_HandleTypeDef hrtc;
 
@@ -15,6 +16,17 @@ static uint16_t boot_snap_rx_got;
 static uint16_t boot_snap_payload_len;
 static uint8_t boot_snap_key_mask;
 static uint8_t boot_snap_http_urc;
+static uint8_t boot_fetch_parsed_ok;
+static uint8_t boot_fetch_rtc_ok;
+static uint16_t boot_fetch_year;
+static uint8_t boot_fetch_month;
+static uint8_t boot_fetch_day;
+static uint8_t boot_fetch_hour;
+static uint8_t boot_fetch_minute;
+static uint8_t boot_fetch_notify_mode;
+static uint16_t boot_fetch_rx_got;
+static uint16_t boot_fetch_payload_len;
+static char boot_fetch_preview[17];
 
 void AppClock_SetHardwareReady(uint8_t ready)
 {
@@ -78,6 +90,80 @@ void AppClock_MarkSynced(void)
   }
   HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, APP_CLOCK_BKP_MAGIC);
   boot_snap_valid = 0U;
+}
+
+void AppClock_SetBootFetch(uint8_t parsed_ok, uint8_t rtc_ok, uint16_t year, uint8_t month,
+                           uint8_t day, uint8_t hour, uint8_t minute, uint8_t notify_mode,
+                           uint16_t rx_got, uint16_t payload_len, const char *csv_preview)
+{
+  boot_fetch_parsed_ok = parsed_ok;
+  boot_fetch_rtc_ok = rtc_ok;
+  boot_fetch_year = year;
+  boot_fetch_month = month;
+  boot_fetch_day = day;
+  boot_fetch_hour = hour;
+  boot_fetch_minute = minute;
+  boot_fetch_notify_mode = notify_mode;
+  boot_fetch_rx_got = rx_got;
+  boot_fetch_payload_len = payload_len;
+  boot_fetch_preview[0] = '\0';
+  if (csv_preview != NULL)
+  {
+    (void)strncpy(boot_fetch_preview, csv_preview, sizeof(boot_fetch_preview) - 1U);
+    boot_fetch_preview[sizeof(boot_fetch_preview) - 1U] = '\0';
+  }
+}
+
+void AppClock_ReadBootFetch(uint8_t *parsed_ok, uint8_t *rtc_ok, uint16_t *year, uint8_t *month,
+                            uint8_t *day, uint8_t *hour, uint8_t *minute, uint8_t *notify_mode,
+                            uint16_t *rx_got, uint16_t *payload_len, char *csv_preview,
+                            uint8_t preview_cap)
+{
+  if (parsed_ok != NULL)
+  {
+    *parsed_ok = boot_fetch_parsed_ok;
+  }
+  if (rtc_ok != NULL)
+  {
+    *rtc_ok = boot_fetch_rtc_ok;
+  }
+  if (year != NULL)
+  {
+    *year = boot_fetch_year;
+  }
+  if (month != NULL)
+  {
+    *month = boot_fetch_month;
+  }
+  if (day != NULL)
+  {
+    *day = boot_fetch_day;
+  }
+  if (hour != NULL)
+  {
+    *hour = boot_fetch_hour;
+  }
+  if (minute != NULL)
+  {
+    *minute = boot_fetch_minute;
+  }
+  if (notify_mode != NULL)
+  {
+    *notify_mode = boot_fetch_notify_mode;
+  }
+  if (rx_got != NULL)
+  {
+    *rx_got = boot_fetch_rx_got;
+  }
+  if (payload_len != NULL)
+  {
+    *payload_len = boot_fetch_payload_len;
+  }
+  if ((csv_preview != NULL) && (preview_cap > 0U))
+  {
+    (void)strncpy(csv_preview, boot_fetch_preview, (size_t)preview_cap - 1U);
+    csv_preview[preview_cap - 1U] = '\0';
+  }
 }
 
 void AppClock_Read(uint8_t *valid, uint8_t *mon, uint8_t *day, uint8_t *hour, uint8_t *min)
