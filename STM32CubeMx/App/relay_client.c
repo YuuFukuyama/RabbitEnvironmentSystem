@@ -207,17 +207,26 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     return 0U;
   }
-  if (At_HttpAuth(DEVICE_TOKEN) != HAL_OK)
+  if (At_HttpAuthBoot(DEVICE_TOKEN) != HAL_OK)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_AUTH);
     return 0U;
   }
-  if (At_HttpGetBoot(RELAY_HOST, "/v1/ops?boot=1") != HAL_OK)
+  if (At_HttpGetBoot(RELAY_HOST, "/v1/ops") != HAL_OK)
   {
     AppClock_SetBootDiag(At_HttpBootRxDiag());
     return 0U;
   }
   body = At_HttpResponse();
+  {
+    const char *json;
+
+    json = strchr(body, '{');
+    if (json != NULL)
+    {
+      body = json;
+    }
+  }
   if (parse_mode(body, &mode) == 0U)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);

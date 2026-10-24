@@ -136,20 +136,20 @@ function japanIso(date = new Date()) {
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}+09:00`;
 }
 
-// 起動時の操作取得。boot=1 のときだけ時刻と通知モードを載せる。
+// 起動時の操作取得。認証済み GET には常に時刻と通知モードを載せる（本体は boot 同期のときだけ呼ぶ）。
 async function deviceOps(request, env, url) {
   const rejected = rejectDevice(request, env);
   if (rejected) {
     return rejected;
   }
-  const body = { ops: [] };
-  if (url.searchParams.get("boot") === "1") {
-    const notifyIds = await alwaysUserIds(env.NotifyUsers);
-    const notifyMode = notifyIds.length > 0 ? 1 : 0;
-    await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
-    body.time = japanIso();
-    body.notifyMode = notifyMode;
-  }
+  const notifyIds = await alwaysUserIds(env.NotifyUsers);
+  const notifyMode = notifyIds.length > 0 ? 1 : 0;
+  await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
+  const body = {
+    ops: [],
+    time: japanIso(),
+    notifyMode,
+  };
   return Response.json(body, {
     headers: {
       "Content-Encoding": "identity",

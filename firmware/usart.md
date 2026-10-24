@@ -71,4 +71,4 @@ CubeMX は USART1 を非同期で初期化する。`MX_USART1_UART_Init` が `HA
 
 ## 起動時の HTTP（時刻同期）
 
-起動時の操作取得は `GET /v1/ops?boot=1` である。`AT+HTTPCHEAD` に `Authorization`、`Content-Type: application/json`、`Accept-Encoding: identity` を載せる。`At_HttpGetBoot` は `AT+HTTPCLIENT=2,1,"","<RELAY_HOST>","/v1/ops?boot=1",2` のように URL を空にして host と path を分け、`boot=1` が path 側に載るようにする。UART 受信バッファ 1024 バイトに `"time":"` と `+09:00` が現れるまで待ち、複数行の `+HTTPCLIENT` が来る場合は `OK` まで読む。暦が無効なとき LCD の時刻欄（5 文字）は、直近の同期失敗に応じて `AUTH?`（ヘッダ設定）、`EMPTY`（応答ほぼ無し）、`HTTP?`（`+HTTPCLIENT` のみ）、`NOTIM`（JSON らしきが `time` 無し）、`GZIP?`（圧縮等の非テキスト）、`SYNC?`（その他 HTTP 失敗）、`PARSE`、`NORTC`、`RTC!` を出す。
+起動時の操作取得は `GET /v1/ops` である。中継は認証済み GET に常に `time` と `notifyMode` を載せる。`At_HttpAuthBoot` は `Authorization` ほかを `AT+HTTPCHEAD` で載せる。`At_HttpGetBoot` は `AT+HTTPCGET="https://<RELAY_HOST>/v1/ops",512,2048,20000` を使う。UART 受信バッファ 2048 バイトに `"time":"` と `+09:00` が現れるまで待ち、`+HTTPCGET` または複数行の `+HTTPCLIENT` が来る場合は `OK` まで読む。暦が無効なとき LCD の時刻欄（5 文字）は、直近の同期失敗に応じて `AUTH?`（ヘッダ設定）、`EMPTY`（応答ほぼ無し）、`HTTP?`（`+HTTPCLIENT` のみ）、`NOTIM`（JSON らしきが `time` 無し）、`GZIP?`（圧縮等の非テキスト）、`SYNC?`（その他 HTTP 失敗）、`PARSE`、`NORTC`、`RTC!` を出す。

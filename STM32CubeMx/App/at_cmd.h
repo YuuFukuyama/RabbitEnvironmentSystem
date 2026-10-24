@@ -14,6 +14,9 @@ HAL_StatusTypeDef At_Disconnect(void);
 /* 以降の HTTP に Authorization と Content-Type を付ける。 */
 HAL_StatusTypeDef At_HttpAuth(const char *token);
 
+/* 起動時 ops 用。X-Device-Boot: 1 を付ける。 */
+HAL_StatusTypeDef At_HttpAuthBoot(const char *token);
+
 /* HTTPS GET を行い、応答を At_HttpResponse に残す。 */
 HAL_StatusTypeDef At_HttpGet(const char *url);
 

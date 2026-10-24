@@ -12,8 +12,8 @@ extern UART_HandleTypeDef huart1;
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_CMD_MAX         240U
 
-/* 1 回の応答。測定周期の外からは使わない。 */
-static uint8_t at_rx[1024];
+/* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
+static uint8_t at_rx[2048];
 /* CWJAP のコマンド。パスワードを含むのでログへ出さない。 */
 static uint8_t at_tx[AT_CMD_MAX + 1U];
 /* boot GET 失敗時の at_rx 分類。 */
@@ -512,13 +512,18 @@ static uint8_t at_head_text(uint16_t *n, const char *text)
   return 1U;
 }
 
-HAL_StatusTypeDef At_HttpAuth(const char *token)
+/* HTTP 要求ヘッダをクリアしてから載せる。 */
+static HAL_StatusTypeDef at_http_auth(const char *token, uint8_t boot_ops)
 {
   uint16_t n;
   uint16_t got;
   uint16_t len;
 
   if ((token == NULL) || (token[0] == '\0'))
+  {
+    return HAL_ERROR;
+  }
+  if (at_command_mark("AT+HTTPCHEAD=0", "OK", AT_RSP_TIMEOUT_MS) != HAL_OK)
   {
     return HAL_ERROR;
   }
@@ -545,6 +550,13 @@ HAL_StatusTypeDef At_HttpAuth(const char *token)
   n++;
   at_http_head[n] = (uint8_t)'\n';
   n++;
+  if (boot_ops != 0U)
+  {
+    if (at_head_text(&n, "X-Device-Boot: 1\r\n") == 0U)
+    {
+      return HAL_ERROR;
+    }
+  }
   if (at_head_text(&n, "Content-Type: application/json\r\n") == 0U)
   {
     return HAL_ERROR;
@@ -577,6 +589,16 @@ HAL_StatusTypeDef At_HttpAuth(const char *token)
     return HAL_ERROR;
   }
   return at_wait_mark(&got, "OK", AT_HTTP_TIMEOUT_MS);
+}
+
+HAL_StatusTypeDef At_HttpAuth(const char *token)
+{
+  return at_http_auth(token, 0U);
+}
+
+HAL_StatusTypeDef At_HttpAuthBoot(const char *token)
+{
+  return at_http_auth(token, 1U);
 }
 
 const char *At_HttpResponse(void)
@@ -622,8 +644,7 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   }
   n = 0U;
   at_tx[0] = 0U;
-  /* url を空にし path へ boot=1 を載せる。一体 URL だとクエリが落ちることがある。 */
-  if (at_put_raw(&n, "AT+HTTPCLIENT=2,1,\"\",\"") == 0U)
+  if (at_put_raw(&n, "AT+HTTPCGET=\"https://") == 0U)
   {
     return HAL_ERROR;
   }
@@ -631,15 +652,11 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   {
     return HAL_ERROR;
   }
-  if (at_put_raw(&n, "\",\"") == 0U)
-  {
-    return HAL_ERROR;
-  }
   if (at_put_raw(&n, path) == 0U)
   {
     return HAL_ERROR;
   }
-  if (at_put_raw(&n, "\",2") == 0U)
+  if (at_put_raw(&n, "\",512,2048,20000") == 0U)
   {
     return HAL_ERROR;
   }
