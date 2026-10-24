@@ -11,6 +11,7 @@ extern UART_HandleTypeDef huart1;
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_BOOT_PAYLOAD_MAX   1024U
+#define AT_BOOT_POST_OK_MS    600U
 #define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -386,8 +387,8 @@ static const char *boot_csv_start(const char *text)
   return mark;
 }
 
-/* 連結結果または at_rx から配列または JSON だけを切り出す。 */
-static void boot_payload_finalize_json(const char *rx)
+/* 連結 payload から CSV または JSON だけを切り出す。 */
+static void boot_payload_finalize_json(void)
 {
   const char *start;
   const char *end;
@@ -397,49 +398,22 @@ static void boot_payload_finalize_json(const char *rx)
   uint32_t len;
 
   search = (char *)boot_payload;
-  if (boot_payload_len > 0U)
+  if (boot_payload_len == 0U)
   {
-    start = boot_csv_start(search);
-    if (start != NULL)
+    return;
+  }
+  start = boot_csv_start(search);
+  if (start != NULL)
+  {
+    end = search + boot_payload_len;
+    while ((end > start) &&
+           ((end[-1] == '\r') || (end[-1] == '\n') || (end[-1] == ' ') || (end[-1] == ']')))
     {
-      end = search + boot_payload_len;
-      while ((end > start) &&
-             ((end[-1] == '\r') || (end[-1] == '\n') || (end[-1] == ' ') || (end[-1] == ']')))
-      {
-        end--;
-      }
-      if (end > start)
-      {
-        len = (uint32_t)(end - start);
-        if (len >= AT_BOOT_PAYLOAD_MAX)
-        {
-          len = AT_BOOT_PAYLOAD_MAX - 1U;
-        }
-        if (start != search)
-        {
-          memmove(boot_payload, start, len);
-        }
-        boot_payload_len = (uint16_t)len;
-        boot_payload[len] = 0U;
-        return;
-      }
+      end--;
     }
-    array = strchr(search, '[');
-    object = strchr(search, '{');
-    start = NULL;
-    if ((array != NULL) && ((object == NULL) || (array < object)))
+    if (end > start)
     {
-      start = array;
-      end = strchr(start, ']');
-    }
-    else if (object != NULL)
-    {
-      start = object;
-      end = strrchr(start, '}');
-    }
-    if ((start != NULL) && (end != NULL) && (end > start))
-    {
-      len = (uint32_t)(end - start + 1U);
+      len = (uint32_t)(end - start);
       if (len >= AT_BOOT_PAYLOAD_MAX)
       {
         len = AT_BOOT_PAYLOAD_MAX - 1U;
@@ -453,8 +427,8 @@ static void boot_payload_finalize_json(const char *rx)
       return;
     }
   }
-  array = strchr(rx, '[');
-  object = strchr(rx, '{');
+  array = strchr(search, '[');
+  object = strchr(search, '{');
   start = NULL;
   if ((array != NULL) && ((object == NULL) || (array < object)))
   {
@@ -466,26 +440,58 @@ static void boot_payload_finalize_json(const char *rx)
     start = object;
     end = strrchr(start, '}');
   }
-  if ((start == NULL) || (end == NULL) || (end <= start))
+  if ((start != NULL) && (end != NULL) && (end > start))
+  {
+    len = (uint32_t)(end - start + 1U);
+    if (len >= AT_BOOT_PAYLOAD_MAX)
+    {
+      len = AT_BOOT_PAYLOAD_MAX - 1U;
+    }
+    if (start != search)
+    {
+      memmove(boot_payload, start, len);
+    }
+    boot_payload_len = (uint16_t)len;
+    boot_payload[len] = 0U;
+  }
+}
+
+/* cursor から最大 nbytes を payload へ足す。改行はサイズに含めない。 */
+static void boot_payload_append_bytes(const char **cursor, uint32_t nbytes, const char *rx_end)
+{
+  uint32_t copied;
+
+  if ((cursor == NULL) || (*cursor == NULL) || (rx_end == NULL) || (nbytes == 0U))
   {
     return;
   }
-  len = (uint32_t)(end - start + 1U);
-  if (len >= AT_BOOT_PAYLOAD_MAX)
+  copied = 0U;
+  while ((copied < nbytes) && (*cursor < rx_end) && (**cursor != '\0'))
   {
-    len = AT_BOOT_PAYLOAD_MAX - 1U;
+    if ((**cursor == '\r') || (**cursor == '\n'))
+    {
+      (*cursor)++;
+      continue;
+    }
+    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+    {
+      break;
+    }
+    boot_payload[boot_payload_len] = (uint8_t)(**cursor);
+    boot_payload_len++;
+    (*cursor)++;
+    copied++;
   }
-  memcpy(boot_payload, start, len);
-  boot_payload_len = (uint16_t)len;
-  boot_payload[len] = 0U;
+  boot_payload[boot_payload_len] = 0U;
 }
 
-/* +HTTPCLIENT の size 以降の data 部を payload へ足す。 */
+/* 1 行の +HTTPCLIENT / +HTTPCGET から data 部を size 分だけ payload へ足す。 */
 static void boot_payload_append_urc_line(const char *line, const char *rx_end)
 {
   const char *colon;
   const char *mark;
-  const char *cursor;
+  const char *chunk;
+  uint32_t size;
   uint8_t had_digit;
 
   if ((line == NULL) || (rx_end == NULL))
@@ -498,40 +504,38 @@ static void boot_payload_append_urc_line(const char *line, const char *rx_end)
     return;
   }
   mark = colon + 1;
+  size = 0U;
   had_digit = 0U;
   while ((mark < rx_end) && (mark[0] >= '0') && (mark[0] <= '9'))
   {
+    size = (size * 10U) + (uint32_t)(mark[0] - '0');
+    mark++;
     had_digit = 1U;
-    mark++;
   }
-  if ((had_digit != 0U) && (mark < rx_end) && (mark[0] == ','))
-  {
-    mark++;
-  }
-  cursor = strchr(mark, '[');
-  if (cursor == NULL)
-  {
-    cursor = strchr(mark, '{');
-  }
-  if (cursor == NULL)
-  {
-    cursor = boot_csv_start(mark);
-  }
-  if (cursor == NULL)
+  if (had_digit == 0U)
   {
     return;
   }
-  while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\r') && (cursor[0] != '\n'))
+  if ((mark < rx_end) && (mark[0] == ','))
   {
-    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+    chunk = mark + 1;
+    if (size > 0U)
     {
-      break;
+      boot_payload_append_bytes(&chunk, size, rx_end);
+      return;
     }
-    boot_payload[boot_payload_len] = (uint8_t)cursor[0];
-    boot_payload_len++;
-    cursor++;
+    while ((chunk < rx_end) && (chunk[0] != '\0') && (chunk[0] != '\r') && (chunk[0] != '\n'))
+    {
+      if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+      {
+        break;
+      }
+      boot_payload[boot_payload_len] = (uint8_t)chunk[0];
+      boot_payload_len++;
+      chunk++;
+    }
+    boot_payload[boot_payload_len] = 0U;
   }
-  boot_payload[boot_payload_len] = 0U;
 }
 
 /* +HTTPCLIENT / +HTTPCGET 各行の JSON 部を連結する。 */
@@ -569,18 +573,14 @@ static void boot_merge_http_payload(void)
       cursor++;
     }
   }
-  boot_payload_finalize_json(rx);
+  boot_payload_finalize_json();
 }
 
-/* boot 応答の探索は連結後を優先する。 */
+/* boot 応答の探索は URC 連結後のみ。 */
 static const char *boot_scan_view(void)
 {
   boot_merge_http_payload();
-  if (boot_payload_len > 0U)
-  {
-    return (char *)boot_payload;
-  }
-  return (char *)at_rx;
+  return (char *)boot_payload;
 }
 
 /* boot GET 失敗時に at_rx を分類する。 */
@@ -915,32 +915,36 @@ static uint8_t boot_has_numeric_clock(const char *text)
   return 1U;
 }
 
-/* 起動時 ops 応答に同期に使える時刻があるか。 */
-static uint8_t at_rx_has_boot_json(void)
+/* 連結 payload が boot 同期に足りるか。at_rx 全体は見ない。 */
+static uint8_t boot_merged_clock_ready(void)
 {
   const char *view;
 
   view = boot_scan_view();
-  if (boot_has_numeric_clock(view) != 0U)
-  {
-    return 1U;
-  }
-  if (boot_has_numeric_clock((char *)at_rx) != 0U)
-  {
-    return 1U;
-  }
-  return 0U;
+  return boot_has_numeric_clock(view);
 }
 
-/* boot GET の本文が at_rx に載るまで待つ。OK 後も分割 URC を読む。 */
+/* boot GET の分割 URC を連結するまで読む。 */
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
+  uint32_t last_activity;
+  uint16_t prev_got;
+  uint8_t seen_ok;
+  uint8_t seen_urc;
 
   t0 = HAL_GetTick();
+  last_activity = t0;
+  seen_ok = 0U;
+  seen_urc = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
+    prev_got = *got;
     at_take_rx(got);
+    if (*got > prev_got)
+    {
+      last_activity = HAL_GetTick();
+    }
     if (strstr((char *)at_rx, "SEND FAIL") != NULL)
     {
       return HAL_ERROR;
@@ -949,12 +953,25 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
-    if (at_rx_has_boot_json() != 0U)
+    if (strstr((char *)at_rx, "OK") != NULL)
+    {
+      seen_ok = 1U;
+    }
+    if (boot_find_http_urc((char *)at_rx) != NULL)
+    {
+      seen_urc = 1U;
+    }
+    if (boot_merged_clock_ready() != 0U)
     {
       return HAL_OK;
     }
+    if ((seen_ok != 0U) && (seen_urc != 0U) &&
+        ((HAL_GetTick() - last_activity) >= AT_BOOT_POST_OK_MS))
+    {
+      break;
+    }
   }
-  if (at_rx_has_boot_json() != 0U)
+  if (boot_merged_clock_ready() != 0U)
   {
     return HAL_OK;
   }
@@ -1144,12 +1161,14 @@ const char *At_HttpResponse(void)
 
 const char *At_HttpBootBody(void)
 {
+  const char *start;
   const char *json;
 
   boot_merge_http_payload();
-  if (boot_payload_len == 0U)
+  start = boot_csv_start((char *)boot_payload);
+  if (start != NULL)
   {
-    return (const char *)at_rx;
+    return start;
   }
   json = strchr((char *)boot_payload, '[');
   if (json != NULL)
@@ -1350,15 +1369,6 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   at_boot_rx_reset();
   got = 0U;
   boot_rx_diag = APP_CLOCK_BOOT_DIAG_HTTP;
-  if (at_boot_try_httpcget(host, path, &got) == HAL_OK)
-  {
-    boot_publish_snap(got);
-    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
-    return HAL_OK;
-  }
-
-  at_boot_rx_reset();
-  got = 0U;
   if (at_boot_try_httpclient_host(host, path, &got) == HAL_OK)
   {
     boot_publish_snap(got);
@@ -1369,6 +1379,15 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   at_boot_rx_reset();
   got = 0U;
   if (at_boot_try_httpclient_url(host, path, &got) == HAL_OK)
+  {
+    boot_publish_snap(got);
+    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    return HAL_OK;
+  }
+
+  at_boot_rx_reset();
+  got = 0U;
+  if (at_boot_try_httpcget(host, path, &got) == HAL_OK)
   {
     boot_publish_snap(got);
     boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
