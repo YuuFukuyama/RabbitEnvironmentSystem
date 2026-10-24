@@ -661,3 +661,20 @@ void EnvJudge_CommitSend(uint8_t sent)
   pending_warn_first = 0U;
   pending_danger_open = 0U;
 }
+
+uint8_t EnvView_IsAlert(const EnvView *view)
+{
+  if (view == NULL)
+  {
+    return 0U;
+  }
+  if (view->sensor_error != 0U)
+  {
+    return 1U;
+  }
+  if (view->risk != ENV_RISK_NORMAL)
+  {
+    return 1U;
+  }
+  return 0U;
+}

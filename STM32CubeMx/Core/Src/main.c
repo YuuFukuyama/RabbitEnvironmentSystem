@@ -256,7 +256,6 @@ int main(void)
       }
 
       App_MeasureOnce(&hi2c1, now_sec);
-      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
       if (rtc_ready != 0U)
       {
@@ -485,6 +484,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* 異常時のみ点灯。起動直後は消灯。 */
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }

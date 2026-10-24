@@ -54,6 +54,7 @@ endif()
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     App/st7032.c
+    App/board_led.c
     App/env_judge.c
     App/lcd_status.c
     App/app_cycle.c

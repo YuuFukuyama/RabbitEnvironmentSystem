@@ -42,4 +42,7 @@ void EnvJudge_CommitSend(uint8_t sent);
 /* 送信結果を稼働状態へ反映する。センサー異常中は上書きしない。 */
 void EnvJudge_NoteWifi(uint8_t failed);
 
+/* S56 と基板 LED 用。センサー異常または WARNING 以上なら 1。 */
+uint8_t EnvView_IsAlert(const EnvView *view);
+
 #endif

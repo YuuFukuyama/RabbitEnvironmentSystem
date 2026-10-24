@@ -1,6 +1,7 @@
 /* 16 桁×2 行の環境表示を ST7032 に書く。 */
 
 #include "lcd_status.h"
+#include "env_judge.h"
 #include "st7032.h"
 
 #define LCD_LINE0 0x00U
@@ -218,7 +219,7 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
     return HAL_ERROR;
   }
 
-  if ((view->sensor_error == 0U) && (view->risk == ENV_RISK_NORMAL))
+  if (EnvView_IsAlert(view) == 0U)
   {
     build_normal_lines(line0, line1, view);
     status = ST7032_SetIconS56(hi2c, 0U);

@@ -2,6 +2,7 @@
 
 #include "app_cycle.h"
 #include "at_cmd.h"
+#include "board_led.h"
 #include "env_judge.h"
 #include "env_sensor.h"
 #include "lcd_status.h"
@@ -64,6 +65,7 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
 
   EnvJudge_Apply(&reading, judge_sec, &view, notes, &note_count, APP_NOTE_CAP);
   (void)LcdStatus_Show(hi2c, &view);
+  BoardLed_SetAlert(EnvView_IsAlert(&view));
 
   /* 正常取得の前は 0 を測定値として送らない。 */
   if (EnvJudge_HasValue() == 0U)
