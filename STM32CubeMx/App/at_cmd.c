@@ -361,6 +361,31 @@ static const char *boot_find_http_urc(const char *cursor)
   return NULL;
 }
 
+/* CSV 本文の先頭。 */
+static const char *boot_csv_start(const char *text)
+{
+  const char *mark;
+
+  if (text == NULL)
+  {
+    return NULL;
+  }
+  mark = text;
+  if (mark[0] == '[')
+  {
+    mark++;
+  }
+  while ((mark[0] != '\0') && ((mark[0] < '0') || (mark[0] > '9')))
+  {
+    mark++;
+  }
+  if ((mark[0] < '0') || (mark[0] > '9'))
+  {
+    return NULL;
+  }
+  return mark;
+}
+
 /* 連結結果または at_rx から配列または JSON だけを切り出す。 */
 static void boot_payload_finalize_json(const char *rx)
 {
@@ -453,31 +478,6 @@ static void boot_payload_finalize_json(const char *rx)
   memcpy(boot_payload, start, len);
   boot_payload_len = (uint16_t)len;
   boot_payload[len] = 0U;
-}
-
-/* CSV 本文の先頭。 */
-static const char *boot_csv_start(const char *text)
-{
-  const char *mark;
-
-  if (text == NULL)
-  {
-    return NULL;
-  }
-  mark = text;
-  if (mark[0] == '[')
-  {
-    mark++;
-  }
-  while ((mark[0] != '\0') && ((mark[0] < '0') || (mark[0] > '9')))
-  {
-    mark++;
-  }
-  if ((mark[0] < '0') || (mark[0] > '9'))
-  {
-    return NULL;
-  }
-  return mark;
 }
 
 /* +HTTPCLIENT の size 以降の data 部を payload へ足す。 */
