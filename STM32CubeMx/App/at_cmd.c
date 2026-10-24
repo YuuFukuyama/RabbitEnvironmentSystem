@@ -11,7 +11,6 @@ extern UART_HandleTypeDef huart1;
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_BOOT_PAYLOAD_MAX   1024U
-#define AT_BOOT_IDLE_MS       800U
 #define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -739,23 +738,11 @@ static uint8_t at_rx_has_boot_json(void)
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
-  uint32_t last_activity;
-  uint8_t seen_ok;
-  uint8_t seen_http;
-  uint16_t prev_got;
 
   t0 = HAL_GetTick();
-  last_activity = t0;
-  seen_ok = 0U;
-  seen_http = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
-    prev_got = *got;
     at_take_rx(got);
-    if (*got > prev_got)
-    {
-      last_activity = HAL_GetTick();
-    }
     if (strstr((char *)at_rx, "SEND FAIL") != NULL)
     {
       return HAL_ERROR;
@@ -764,22 +751,9 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
-    if (strstr((char *)at_rx, "OK") != NULL)
-    {
-      seen_ok = 1U;
-    }
-    if (boot_find_http_urc((char *)at_rx) != NULL)
-    {
-      seen_http = 1U;
-    }
     if (at_rx_has_boot_json() != 0U)
     {
       return HAL_OK;
-    }
-    if ((seen_ok != 0U) && (seen_http != 0U) &&
-        ((HAL_GetTick() - last_activity) >= AT_BOOT_IDLE_MS))
-    {
-      break;
     }
   }
   if (at_rx_has_boot_json() != 0U)
