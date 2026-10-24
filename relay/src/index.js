@@ -1,9 +1,14 @@
-// LINE の Webhook を受け、署名を検証して返信する。許可は LineUsers、定期通知の ON は NotifyUsers。
+// LINE の Webhook を受け、署名を検証して返信する。許可は LineUsers、通知設定は NotifyUsers。
 // 本体の操作取得と測定は /v1/ops と /v1/measurements。測定は History に足す。
 
 const ALLOW_KEY = "allowed-user-ids";
 const NOTIFY_KEY = "notify-on-user-ids";
+const NOTIFY_PREF_KEY = "notify-pref-by-user";
+const LAST_ALERT_PUSH_KEY = "last-alert-push-by-user";
 const BOOT_NOTIFY_KEY = "boot-notify-user-ids";
+const NOTIFY_PREF_STANDARD = "standard";
+const NOTIFY_PREF_SAFE = "safe";
+const NOTIFY_PREF_ALWAYS = "always";
 const HISTORY_KEY = "measurements";
 const HISTORY_LIMIT = 1008;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -138,7 +143,7 @@ async function deviceOps(request, env, url) {
   }
   const body = { ops: [] };
   if (url.searchParams.get("boot") === "1") {
-    const notifyIds = await readIdList(env.NotifyUsers, NOTIFY_KEY);
+    const notifyIds = await alwaysUserIds(env.NotifyUsers);
     const notifyMode = notifyIds.length > 0 ? 1 : 0;
     await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
     body.time = japanIso();
@@ -175,11 +180,14 @@ async function deviceMeasurement(request, env) {
   await appendHistory(env.History, row.record);
   const text = lineText(row.record, row.notify, row.periodic);
   if (text) {
-    const ids = row.notify === 1
-      ? await allRecipients(env)
-      : await readIdList(env.NotifyUsers, BOOT_NOTIFY_KEY);
     try {
-      await pushText(env.CHANNEL_ACCESS_TOKEN, ids, text);
+      if (row.notify === 1) {
+        const ids = await allRecipients(env);
+        await pushAlertFiltered(env, ids, row.record, text);
+      } else {
+        const ids = await readIdList(env.NotifyUsers, BOOT_NOTIFY_KEY);
+        await pushText(env.CHANNEL_ACCESS_TOKEN, ids, text);
+      }
     } catch {
       // 履歴は残っている。LINE の失敗で本体に再送させない。
     }
@@ -290,6 +298,72 @@ async function allRecipients(env) {
   return ids;
 }
 
+// 通常通知モードの利用者だけ異常 push を省略する。
+async function pushAlertFiltered(env, ids, record, text) {
+  if (!ids || ids.length === 0) {
+    return;
+  }
+  const lastMap = await readLastAlertPushes(env.NotifyUsers);
+  const toSend = [];
+  const nextLast = { ...lastMap };
+  for (const userId of ids) {
+    const pref = await getUserNotifyPref(env.NotifyUsers, userId);
+    if (pref === NOTIFY_PREF_STANDARD) {
+      const last = lastMap[userId];
+      if (!shouldPushAlert(record, last)) {
+        continue;
+      }
+    }
+    toSend.push(userId);
+    nextLast[userId] = alertPushSnapshot(record);
+  }
+  if (toSend.length === 0) {
+    return;
+  }
+  await pushText(env.CHANNEL_ACCESS_TOKEN, toSend, text);
+  await writeLastAlertPushes(env.NotifyUsers, nextLast);
+}
+
+// 異常 push の省略判定。lastSent が無いときは送る。
+function shouldPushAlert(record, lastSent) {
+  if (!lastSent) {
+    return true;
+  }
+  if (record.danger === "NORMAL") {
+    return true;
+  }
+  if (record.temperatureState !== lastSent.temperatureState) {
+    return true;
+  }
+  if (record.humidityState !== lastSent.humidityState) {
+    return true;
+  }
+  const rankNow = dangerRank(record.danger);
+  const rankLast = dangerRank(lastSent.danger);
+  if (rankNow > rankLast) {
+    return false;
+  }
+  if (record.danger === lastSent.danger) {
+    return false;
+  }
+  return true;
+}
+
+// 省略比較用の危険度順。
+function dangerRank(danger) {
+  const index = DANGERS.indexOf(danger);
+  return index >= 0 ? index : 0;
+}
+
+// 最後に送った異常の状態。
+function alertPushSnapshot(record) {
+  return {
+    danger: record.danger,
+    temperatureState: record.temperatureState,
+    humidityState: record.humidityState,
+  };
+}
+
 // 同じ文面を利用者へ push する。
 async function pushText(token, ids, text) {
   if (!ids || ids.length === 0) {
@@ -334,11 +408,18 @@ async function messagesFor(env, userId, text) {
   if (text === "いまの状態") {
     return currentStateMessage(env, userId);
   }
-  if (text === "定期通知") {
-    return notifyStatusMessage(env, userId);
+  if (text === "通知設定" || text === "定期通知") {
+    return notifyPrefStatusMessage(env, userId);
   }
-  if (text === "オン" || text === "オフ") {
-    return setNotify(env.NotifyUsers, userId, text === "オン");
+  const prefFromText = notifyPrefFromMessage(text);
+  if (prefFromText) {
+    return setNotifyPref(env.NotifyUsers, userId, prefFromText);
+  }
+  if (text === "オン") {
+    return setNotifyPref(env.NotifyUsers, userId, NOTIFY_PREF_ALWAYS);
+  }
+  if (text === "オフ") {
+    return setNotifyPref(env.NotifyUsers, userId, NOTIFY_PREF_SAFE);
   }
   if (text === "平均") {
     return averageMessage(await recordsWithin24h(env.History));
@@ -366,7 +447,7 @@ function otherMenu() {
 // 履歴の最新1件を返す。無ければ温度と湿度は出さない。
 async function currentStateMessage(env, userId) {
   const records = await readHistory(env.History);
-  const notifyLine = `定期通知：${notifyWord(await isNotifyOn(env.NotifyUsers, userId))}`;
+  const notifyLine = `通知設定：${notifyPrefLabel(await getUserNotifyPref(env.NotifyUsers, userId))}`;
   const latest = records.at(-1);
   if (!latest) {
     return { type: "text", text: `【いまの状態】\n未取得\n${notifyLine}` };
@@ -388,37 +469,161 @@ async function currentStateMessage(env, userId) {
   };
 }
 
-// その利用者の定期通知がオンかを返し、切り替えボタンを添える。
-async function notifyStatusMessage(env, userId) {
-  const on = await isNotifyOn(env.NotifyUsers, userId);
+// 通知設定の現モードと切替ボタンを返す。
+async function notifyPrefStatusMessage(env, userId) {
+  const pref = await getUserNotifyPref(env.NotifyUsers, userId);
   return {
     type: "text",
-    text: `定期通知：${notifyWord(on)}\n本体をリセットすると反映されます。`,
-    quickReply: notifyQuickReply(),
+    text: [
+      `通知設定：${notifyPrefLabel(pref)}`,
+      "",
+      "通常通知 … 定期通知なし。状態が変わらない再通知・危険度だけの上昇は省略",
+      "安心 … 定期通知なし。異常・復帰はすべて通知",
+      "常に通知 … 60分ごとの定期通知と、異常のたびに通知",
+      "",
+      "本体をリセットすると、定期通知の開始・停止が反映されます。",
+    ].join("\n"),
+    quickReply: notifyPrefQuickReply(),
   };
 }
 
-// オンまたはオフのボタンを返す。
-function notifyQuickReply() {
+// 通知設定の3モードボタン。並びは通常通知、安心、常に通知。
+function notifyPrefQuickReply() {
   return {
     items: [
-      { type: "action", action: { type: "message", label: "オン", text: "オン" } },
-      { type: "action", action: { type: "message", label: "オフ", text: "オフ" } },
+      { type: "action", action: { type: "message", label: "通常通知", text: "通常通知モード" } },
+      { type: "action", action: { type: "message", label: "安心", text: "安心モード" } },
+      { type: "action", action: { type: "message", label: "常に通知", text: "常に通知モード" } },
     ],
   };
 }
 
-// 定期通知の ON リストへ利用者を足すか、外す。
-async function setNotify(kv, userId, on) {
-  const current = await readIdList(kv, NOTIFY_KEY);
-  const next = on
-    ? (current.includes(userId) ? current : [...current, userId])
-    : current.filter((id) => id !== userId);
-  await kv.put(NOTIFY_KEY, JSON.stringify(next));
+// メッセージから通知設定の内部値を返す。該当しなければ null。
+function notifyPrefFromMessage(text) {
+  if (text === "通常通知モード") {
+    return NOTIFY_PREF_STANDARD;
+  }
+  if (text === "安心モード" || text === "通常モード") {
+    return NOTIFY_PREF_SAFE;
+  }
+  if (text === "簡易通知モード") {
+    return NOTIFY_PREF_STANDARD;
+  }
+  if (text === "常に通知モード") {
+    return NOTIFY_PREF_ALWAYS;
+  }
+  return null;
+}
+
+// 通知設定を1件だけ書く。
+async function setNotifyPref(kv, userId, mode) {
+  const prefs = await readNotifyPrefs(kv);
+  prefs[userId] = mode;
+  await writeNotifyPrefs(kv, prefs);
+  if (mode === NOTIFY_PREF_STANDARD) {
+    await clearLastAlertPush(kv, userId);
+  }
   return {
     type: "text",
-    text: `定期通知を${notifyWord(on)}にしました。\n本体をリセットすると反映されます。`,
+    text: [
+      `通知設定：${notifyPrefLabel(mode)}`,
+      "",
+      "本体をリセットすると、定期通知の開始・停止が反映されます。",
+    ].join("\n"),
   };
+}
+
+// 利用者ごとの通知設定を読む。無ければ安心。
+async function getUserNotifyPref(kv, userId) {
+  const prefs = await readNotifyPrefs(kv);
+  return prefs[userId] ?? NOTIFY_PREF_SAFE;
+}
+
+// 常に通知モードの userId 一覧を返す。
+async function alwaysUserIds(kv) {
+  const prefs = await readNotifyPrefs(kv);
+  return Object.keys(prefs).filter((id) => prefs[id] === NOTIFY_PREF_ALWAYS);
+}
+
+// 通知設定の JSON を読む。旧リストがあれば always へ移す。
+async function readNotifyPrefs(kv) {
+  const raw = await kv.get(NOTIFY_PREF_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return sanitizeNotifyPrefs(parsed);
+      }
+    } catch {
+      // 壊れていれば旧形式へフォールバックする。
+    }
+  }
+  const legacy = await readIdList(kv, NOTIFY_KEY);
+  const prefs = {};
+  for (const id of legacy) {
+    prefs[id] = NOTIFY_PREF_ALWAYS;
+  }
+  return prefs;
+}
+
+// 通知設定の値だけ残す。
+function sanitizeNotifyPrefs(obj) {
+  const allowed = new Set([NOTIFY_PREF_STANDARD, NOTIFY_PREF_SAFE, NOTIFY_PREF_ALWAYS]);
+  const out = {};
+  for (const [userId, mode] of Object.entries(obj)) {
+    if (typeof userId === "string" && allowed.has(mode)) {
+      out[userId] = mode;
+    }
+  }
+  return out;
+}
+
+// 通知設定を KV に書く。
+async function writeNotifyPrefs(kv, prefs) {
+  await kv.put(NOTIFY_PREF_KEY, JSON.stringify(sanitizeNotifyPrefs(prefs)));
+}
+
+// 表示名を返す。
+function notifyPrefLabel(mode) {
+  if (mode === NOTIFY_PREF_STANDARD) {
+    return "通常通知モード";
+  }
+  if (mode === NOTIFY_PREF_ALWAYS) {
+    return "常に通知モード";
+  }
+  return "安心モード";
+}
+
+// 通常通知用の最後に送った状態を読む。
+async function readLastAlertPushes(kv) {
+  const raw = await kv.get(LAST_ALERT_PUSH_KEY);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+// 通常通知用の最後に送った状態を書く。
+async function writeLastAlertPushes(kv, map) {
+  await kv.put(LAST_ALERT_PUSH_KEY, JSON.stringify(map));
+}
+
+// 利用者の省略比較用スナップショットを消す。
+async function clearLastAlertPush(kv, userId) {
+  const map = await readLastAlertPushes(kv);
+  if (map[userId] === undefined) {
+    return;
+  }
+  delete map[userId];
+  await writeLastAlertPushes(kv, map);
 }
 
 // 直近24時間の平均を返す。欠測は件数に入れない。
@@ -536,17 +741,6 @@ async function updateAllowList(kv, text) {
     : current.includes(userId) ? current : [...current, userId];
   await kv.put(ALLOW_KEY, JSON.stringify(next));
   return { type: "text", text: command === "許可解除" ? "許可を解除しました。" : "許可しました。" };
-}
-
-// 定期通知が ON の利用者かを返す。
-async function isNotifyOn(kv, userId) {
-  const ids = await readIdList(kv, NOTIFY_KEY);
-  return ids.includes(userId);
-}
-
-// オンまたはオフの表示を返す。
-function notifyWord(on) {
-  return on ? "オン" : "オフ";
 }
 
 // History の measurements を時刻順に読む。1件は湿度、温度、湿度の状態、温度の状態、危険度、日本時間。
