@@ -164,12 +164,12 @@ async function deviceOps(request, env, url) {
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
   const clock = japanClockParts();
-  // ESP-AT の +HTTPCLIENT 1 行が短い実機向け。curl は y/M/d/h/m/n または従来キーで確認する。
-  const body = `{"y":${clock.year},"M":${clock.month},"d":${clock.day},"h":${clock.hour},"m":${clock.minute},"n":${notifyMode}}`;
+  // ESP-AT の 1 行 URC 向け。順序固定: 年,月,日,時,分,notifyMode。秒は本体で 0。
+  const body = `[${clock.year},${clock.month},${clock.day},${clock.hour},${clock.minute},${notifyMode}]`;
   return new Response(body, {
     status: 200,
     headers: {
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "text/plain; charset=utf-8",
       "Content-Encoding": "identity",
       "Cache-Control": "no-store, private, max-age=0, no-transform",
       "X-Ops-With-Time": "1",

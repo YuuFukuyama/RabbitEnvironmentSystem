@@ -198,7 +198,84 @@ static HAL_StatusTypeDef apply_rtc_fields(uint16_t year, uint16_t month, uint16_
   return HAL_OK;
 }
 
-/* 応答 JSON の数値暦を RTC へ書く。 */
+/* 配列 [年,月,日,時,分,notifyMode] を読む。 */
+static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *month, uint16_t *day,
+                                uint16_t *hour, uint16_t *minute, uint8_t *mode)
+{
+  const char *mark;
+  uint8_t index;
+  uint32_t number;
+  uint8_t digits;
+  uint16_t values[6];
+
+  if (body == NULL)
+  {
+    return 0U;
+  }
+  mark = strchr(body, '[');
+  if (mark == NULL)
+  {
+    return 0U;
+  }
+  mark++;
+  for (index = 0U; index < 6U; index++)
+  {
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if ((*mark < '0') || (*mark > '9'))
+    {
+      return 0U;
+    }
+    number = 0U;
+    digits = 0U;
+    while ((*mark >= '0') && (*mark <= '9'))
+    {
+      number = (number * 10U) + (uint32_t)(*mark - '0');
+      if (number > 65535U)
+      {
+        return 0U;
+      }
+      mark++;
+      digits++;
+    }
+    if (digits == 0U)
+    {
+      return 0U;
+    }
+    values[index] = (uint16_t)number;
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if (index < 5U)
+    {
+      if (*mark != ',')
+      {
+        return 0U;
+      }
+      mark++;
+    }
+    else if ((*mark != ']') && (*mark != '\0') && (*mark != '\r') && (*mark != '\n'))
+    {
+      return 0U;
+    }
+  }
+  *year = values[0];
+  *month = values[1];
+  *day = values[2];
+  *hour = values[3];
+  *minute = values[4];
+  if ((values[5] != 0U) && (values[5] != 1U))
+  {
+    return 0U;
+  }
+  *mode = (uint8_t)values[5];
+  return 1U;
+}
+
+/* 応答の数値暦を RTC へ書く。 */
 static HAL_StatusTypeDef apply_clock_from_body(const char *body)
 {
   uint16_t year;
@@ -207,7 +284,13 @@ static HAL_StatusTypeDef apply_clock_from_body(const char *body)
   uint16_t hour;
   uint16_t minute;
   uint16_t second;
+  uint8_t mode;
 
+  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
+  {
+    second = 0U;
+    return apply_rtc_fields(year, month, day, hour, minute, second);
+  }
   if ((parse_json_u16_alt(body, "\"year\"", "\"y\":", &year) == 0U) ||
       (parse_json_u16_alt(body, "\"month\"", "\"M\":", &month) == 0U) ||
       (parse_json_u16_alt(body, "\"day\"", "\"d\":", &day) == 0U) ||
@@ -225,7 +308,16 @@ static HAL_StatusTypeDef apply_clock_from_body(const char *body)
 static uint8_t parse_mode(const char *body, uint8_t *mode)
 {
   const char *mark;
+  uint16_t year;
+  uint16_t month;
+  uint16_t day;
+  uint16_t hour;
+  uint16_t minute;
 
+  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, mode) != 0U)
+  {
+    return 1U;
+  }
   mark = strstr(body, "\"notifyMode\":");
   if (mark == NULL)
   {

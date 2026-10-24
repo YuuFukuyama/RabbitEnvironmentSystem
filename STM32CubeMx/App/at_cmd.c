@@ -361,45 +361,62 @@ static const char *boot_find_http_urc(const char *cursor)
   return NULL;
 }
 
-/* 連結結果または at_rx から JSON オブジェクトだけを切り出す。 */
+/* 連結結果または at_rx から配列または JSON だけを切り出す。 */
 static void boot_payload_finalize_json(const char *rx)
 {
   const char *start;
   const char *end;
   const char *search;
+  const char *array;
+  const char *object;
   uint32_t len;
 
   search = (char *)boot_payload;
   if (boot_payload_len > 0U)
   {
-    start = strchr(search, '{');
-    if (start != NULL)
+    array = strchr(search, '[');
+    object = strchr(search, '{');
+    start = NULL;
+    if ((array != NULL) && ((object == NULL) || (array < object)))
     {
+      start = array;
+      end = strchr(start, ']');
+    }
+    else if (object != NULL)
+    {
+      start = object;
       end = strrchr(start, '}');
-      if ((end != NULL) && (end > start))
+    }
+    if ((start != NULL) && (end != NULL) && (end > start))
+    {
+      len = (uint32_t)(end - start + 1U);
+      if (len >= AT_BOOT_PAYLOAD_MAX)
       {
-        len = (uint32_t)(end - start + 1U);
-        if (len >= AT_BOOT_PAYLOAD_MAX)
-        {
-          len = AT_BOOT_PAYLOAD_MAX - 1U;
-        }
-        if (start != search)
-        {
-          memmove(boot_payload, start, len);
-        }
-        boot_payload_len = (uint16_t)len;
-        boot_payload[len] = 0U;
-        return;
+        len = AT_BOOT_PAYLOAD_MAX - 1U;
       }
+      if (start != search)
+      {
+        memmove(boot_payload, start, len);
+      }
+      boot_payload_len = (uint16_t)len;
+      boot_payload[len] = 0U;
+      return;
     }
   }
-  start = strchr(rx, '{');
-  if (start == NULL)
+  array = strchr(rx, '[');
+  object = strchr(rx, '{');
+  start = NULL;
+  if ((array != NULL) && ((object == NULL) || (array < object)))
   {
-    return;
+    start = array;
+    end = strchr(start, ']');
   }
-  end = strrchr(start, '}');
-  if ((end == NULL) || (end <= start))
+  else if (object != NULL)
+  {
+    start = object;
+    end = strrchr(start, '}');
+  }
+  if ((start == NULL) || (end == NULL) || (end <= start))
   {
     return;
   }
@@ -413,22 +430,26 @@ static void boot_payload_finalize_json(const char *rx)
   boot_payload[len] = 0U;
 }
 
-/* URC 行の { から行末までを payload へ足す。 */
+/* URC 行の [ または { から行末までを payload へ足す。 */
 static void boot_payload_append_json_line(const char *line, const char *rx_end)
 {
   const char *cursor;
-  const char *brace;
+  const char *body;
 
   if ((line == NULL) || (rx_end == NULL))
   {
     return;
   }
-  brace = strchr(line, '{');
-  if (brace == NULL)
+  body = strchr(line, '[');
+  if (body == NULL)
+  {
+    body = strchr(line, '{');
+  }
+  if (body == NULL)
   {
     return;
   }
-  cursor = brace;
+  cursor = body;
   while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\r') && (cursor[0] != '\n'))
   {
     if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
@@ -520,6 +541,10 @@ static uint8_t classify_boot_rx(void)
     {
       return APP_CLOCK_BOOT_DIAG_HTTP;
     }
+    if (strchr(view, '[') != NULL)
+    {
+      return APP_CLOCK_BOOT_DIAG_NOTIM;
+    }
     if (strstr(view, "{") != NULL || strstr(view, "\"ops\"") != NULL)
     {
       return APP_CLOCK_BOOT_DIAG_NOTIM;
@@ -595,57 +620,185 @@ static uint8_t boot_field_seen(const char *key_long, const char *key_short)
   return boot_key_seen(key_short);
 }
 
+/* 配列 [年,月,日,時,分,notifyMode] が 6 要素あるか。 */
+static uint8_t boot_has_boot_array(const char *text)
+{
+  const char *mark;
+  uint8_t index;
+  uint8_t digits;
+
+  if (text == NULL)
+  {
+    return 0U;
+  }
+  mark = strchr(text, '[');
+  if (mark == NULL)
+  {
+    return 0U;
+  }
+  mark++;
+  for (index = 0U; index < 6U; index++)
+  {
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if ((*mark < '0') || (*mark > '9'))
+    {
+      return 0U;
+    }
+    digits = 0U;
+    while ((*mark >= '0') && (*mark <= '9'))
+    {
+      mark++;
+      digits++;
+    }
+    if (digits == 0U)
+    {
+      return 0U;
+    }
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if (index < 5U)
+    {
+      if (*mark != ',')
+      {
+        return 0U;
+      }
+      mark++;
+    }
+    else if (*mark != ']')
+    {
+      return 0U;
+    }
+  }
+  return 1U;
+}
+
+/* 配列の先頭から読めた要素数に応じてスナップ用キー bit を返す。 */
+static uint8_t boot_array_snap_keys(const char *text)
+{
+  const char *mark;
+  uint8_t index;
+  uint8_t keys;
+  uint8_t digits;
+
+  keys = 0U;
+  mark = strchr(text, '[');
+  if (mark == NULL)
+  {
+    return 0U;
+  }
+  mark++;
+  for (index = 0U; index < 5U; index++)
+  {
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if ((*mark < '0') || (*mark > '9'))
+    {
+      break;
+    }
+    digits = 0U;
+    while ((*mark >= '0') && (*mark <= '9'))
+    {
+      mark++;
+      digits++;
+    }
+    if (digits == 0U)
+    {
+      break;
+    }
+    if (index == 0U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_YEAR;
+    }
+    else if (index == 1U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_MONTH;
+    }
+    else if (index == 2U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_DAY;
+    }
+    else if (index == 3U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_HOUR;
+    }
+    else
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
+    }
+    while ((*mark == ' ') || (*mark == '\t'))
+    {
+      mark++;
+    }
+    if (*mark != ',')
+    {
+      break;
+    }
+    mark++;
+  }
+  return keys;
+}
+
 /* boot GET 受信内容を AppClock へ渡す。 */
 static void boot_publish_snap(uint16_t got)
 {
+  const char *urc_line;
+  const char *view;
   uint8_t keys;
   uint8_t urc;
 
   boot_merge_http_payload();
-  keys = 0U;
-  if (boot_field_seen("\"year\"", "\"y\":") != 0U)
+  urc = APP_CLOCK_BOOT_URC_NONE;
+  urc_line = boot_find_http_urc((char *)at_rx);
+  if (urc_line != NULL)
   {
-    keys |= APP_CLOCK_BOOT_SNAP_YEAR;
-  }
-  if (boot_field_seen("\"month\"", "\"M\":") != 0U)
-  {
-    keys |= APP_CLOCK_BOOT_SNAP_MONTH;
-  }
-  if (boot_field_seen("\"day\"", "\"d\":") != 0U)
-  {
-    keys |= APP_CLOCK_BOOT_SNAP_DAY;
-  }
-  if (boot_field_seen("\"hour\"", "\"h\":") != 0U)
-  {
-    keys |= APP_CLOCK_BOOT_SNAP_HOUR;
-  }
-  if (boot_field_seen("\"minute\"", "\"m\":") != 0U)
-  {
-    keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
-  }
-  {
-    const char *urc_line;
-
-    urc = APP_CLOCK_BOOT_URC_NONE;
-    urc_line = boot_find_http_urc((char *)at_rx);
-    if (urc_line != NULL)
+    if (strncmp(urc_line, "+HTTPCLIENT:", 12) == 0)
     {
-      if (strncmp(urc_line, "+HTTPCLIENT:", 12) == 0)
-      {
-        urc = APP_CLOCK_BOOT_URC_CLIENT;
-      }
-      else
-      {
-        urc = APP_CLOCK_BOOT_URC_GET;
-      }
+      urc = APP_CLOCK_BOOT_URC_CLIENT;
     }
-    else if (strstr((char *)at_rx, "+HTTPCLIENT=") != NULL)
+    else
     {
-      urc = APP_CLOCK_BOOT_URC_ECHO;
+      urc = APP_CLOCK_BOOT_URC_GET;
     }
-    else if (strstr((char *)at_rx, "AT+HTTPCLIENT") != NULL)
+  }
+  else if (strstr((char *)at_rx, "+HTTPCLIENT=") != NULL)
+  {
+    urc = APP_CLOCK_BOOT_URC_ECHO;
+  }
+  else if (strstr((char *)at_rx, "AT+HTTPCLIENT") != NULL)
+  {
+    urc = APP_CLOCK_BOOT_URC_ECHO;
+  }
+  view = boot_scan_view();
+  keys = boot_array_snap_keys(view);
+  if (keys == 0U)
+  {
+    keys = 0U;
+    if (boot_field_seen("\"year\"", "\"y\":") != 0U)
     {
-      urc = APP_CLOCK_BOOT_URC_ECHO;
+      keys |= APP_CLOCK_BOOT_SNAP_YEAR;
+    }
+    if (boot_field_seen("\"month\"", "\"M\":") != 0U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_MONTH;
+    }
+    if (boot_field_seen("\"day\"", "\"d\":") != 0U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_DAY;
+    }
+    if (boot_field_seen("\"hour\"", "\"h\":") != 0U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_HOUR;
+    }
+    if (boot_field_seen("\"minute\"", "\"m\":") != 0U)
+    {
+      keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
     }
   }
   AppClock_SetBootSnap(got, boot_payload_len, keys, urc);
@@ -657,6 +810,10 @@ static uint8_t boot_has_numeric_clock(const char *text)
   if (text == NULL)
   {
     return 0U;
+  }
+  if (boot_has_boot_array(text) != 0U)
+  {
+    return 1U;
   }
   if ((strstr(text, "\"year\":") == NULL) && (strstr(text, "\"y\":") == NULL))
   {
@@ -916,6 +1073,11 @@ const char *At_HttpBootBody(void)
   if (boot_payload_len == 0U)
   {
     return (const char *)at_rx;
+  }
+  json = strchr((char *)boot_payload, '[');
+  if (json != NULL)
+  {
+    return json;
   }
   json = strchr((char *)boot_payload, '{');
   if (json != NULL)
