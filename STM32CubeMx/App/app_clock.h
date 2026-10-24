@@ -25,6 +25,7 @@
 #define APP_CLOCK_BOOT_URC_NONE    0U
 #define APP_CLOCK_BOOT_URC_CLIENT  1U
 #define APP_CLOCK_BOOT_URC_GET     2U
+#define APP_CLOCK_BOOT_URC_ECHO    3U
 
 /* LSE と RTC が使えるときだけ 1。 */
 void AppClock_SetHardwareReady(uint8_t ready);

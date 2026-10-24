@@ -265,6 +265,10 @@ static void build_boot_debug_lines(char *line0, char *line1, uint8_t boot_diag)
   {
     pos = copy_text(line1, pos, "HG");
   }
+  else if (http_urc == APP_CLOCK_BOOT_URC_ECHO)
+  {
+    pos = copy_text(line1, pos, "Ec");
+  }
   else
   {
     pos = copy_text(line1, pos, "--");
