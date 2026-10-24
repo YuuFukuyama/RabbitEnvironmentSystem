@@ -11,7 +11,8 @@ extern UART_HandleTypeDef huart1;
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_BOOT_PAYLOAD_MAX   1024U
-#define AT_BOOT_POST_OK_MS    600U
+#define AT_BOOT_POST_OK_MS    1200U
+#define AT_BOOT_CSV_COMMAS    5U
 #define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -881,6 +882,138 @@ static void boot_publish_snap(uint16_t got)
   AppClock_SetBootSnap(got, boot_payload_len, keys, urc);
 }
 
+/* CSV 本文内のカンマ数。 */
+static uint8_t boot_csv_count_commas(const char *start, const char *end)
+{
+  uint8_t count;
+
+  count = 0U;
+  while ((start < end) && (start[0] != '\0'))
+  {
+    if (start[0] == ',')
+    {
+      count++;
+    }
+    start++;
+  }
+  return count;
+}
+
+/* 暦 6 フィールドを読む。notifyMode まで必須。 */
+static uint8_t boot_parse_csv_strict(const char *text, uint16_t *year, uint16_t *month,
+                                     uint16_t *day, uint16_t *hour, uint16_t *minute,
+                                     uint8_t *notify_mode)
+{
+  const char *mark;
+  uint8_t index;
+  uint32_t number;
+  uint8_t digits;
+  uint16_t values[6];
+
+  mark = boot_csv_start(text);
+  if (mark == NULL)
+  {
+    return 0U;
+  }
+  for (index = 0U; index < 6U; index++)
+  {
+    while ((mark[0] == ' ') || (mark[0] == '\t'))
+    {
+      mark++;
+    }
+    if ((mark[0] < '0') || (mark[0] > '9'))
+    {
+      return 0U;
+    }
+    number = 0U;
+    digits = 0U;
+    while ((mark[0] >= '0') && (mark[0] <= '9'))
+    {
+      number = (number * 10U) + (uint32_t)(mark[0] - '0');
+      if (number > 65535U)
+      {
+        return 0U;
+      }
+      mark++;
+      digits++;
+    }
+    if (digits == 0U)
+    {
+      return 0U;
+    }
+    values[index] = (uint16_t)number;
+    while ((mark[0] == ' ') || (mark[0] == '\t'))
+    {
+      mark++;
+    }
+    if (index < 5U)
+    {
+      if (mark[0] != ',')
+      {
+        return 0U;
+      }
+      mark++;
+    }
+    else if ((mark[0] != '\0') && (mark[0] != '\r') && (mark[0] != '\n') && (mark[0] != ']'))
+    {
+      return 0U;
+    }
+  }
+  if (values[0] < 100U)
+  {
+    values[0] = (uint16_t)(values[0] + 2000U);
+  }
+  if ((values[0] < 2000U) || (values[0] > 2099U) || (values[1] < 1U) || (values[1] > 12U) ||
+      (values[2] < 1U) || (values[2] > 31U) || (values[3] > 23U) || (values[4] > 59U))
+  {
+    return 0U;
+  }
+  if ((values[5] != 0U) && (values[5] != 1U))
+  {
+    return 0U;
+  }
+  *year = values[0];
+  *month = values[1];
+  *day = values[2];
+  *hour = values[3];
+  *minute = values[4];
+  *notify_mode = (uint8_t)values[5];
+  return 1U;
+}
+
+/* 連結 CSV が ops 同期に足りるか。 */
+static uint8_t boot_merged_ops_csv_ready(const char *text)
+{
+  const char *start;
+  const char *end;
+  uint16_t year;
+  uint16_t month;
+  uint16_t day;
+  uint16_t hour;
+  uint16_t minute;
+  uint8_t notify_mode;
+
+  if (text == NULL)
+  {
+    return 0U;
+  }
+  if (boot_payload_len == 0U)
+  {
+    return 0U;
+  }
+  start = boot_csv_start(text);
+  if (start == NULL)
+  {
+    return 0U;
+  }
+  end = (char *)boot_payload + boot_payload_len;
+  if (boot_csv_count_commas(start, end) < AT_BOOT_CSV_COMMAS)
+  {
+    return 0U;
+  }
+  return boot_parse_csv_strict(text, &year, &month, &day, &hour, &minute, &notify_mode);
+}
+
 /* 数値暦キーが揃っているか。 */
 static uint8_t boot_has_numeric_clock(const char *text)
 {
@@ -921,7 +1054,7 @@ static uint8_t boot_merged_clock_ready(void)
   const char *view;
 
   view = boot_scan_view();
-  return boot_has_numeric_clock(view);
+  return boot_merged_ops_csv_ready(view);
 }
 
 /* boot GET の分割 URC を連結するまで読む。 */
@@ -930,6 +1063,7 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
   uint32_t t0;
   uint32_t last_activity;
   uint16_t prev_got;
+  uint16_t prev_pl;
   uint8_t seen_ok;
   uint8_t seen_urc;
 
@@ -937,12 +1071,19 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
   last_activity = t0;
   seen_ok = 0U;
   seen_urc = 0U;
+  prev_pl = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
     prev_got = *got;
     at_take_rx(got);
     if (*got > prev_got)
     {
+      last_activity = HAL_GetTick();
+    }
+    boot_merge_http_payload();
+    if (boot_payload_len > prev_pl)
+    {
+      prev_pl = boot_payload_len;
       last_activity = HAL_GetTick();
     }
     if (strstr((char *)at_rx, "SEND FAIL") != NULL)
@@ -961,14 +1102,10 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       seen_urc = 1U;
     }
-    if (boot_merged_clock_ready() != 0U)
-    {
-      return HAL_OK;
-    }
-    if ((seen_ok != 0U) && (seen_urc != 0U) &&
+    if ((boot_merged_clock_ready() != 0U) && (seen_ok != 0U) &&
         ((HAL_GetTick() - last_activity) >= AT_BOOT_POST_OK_MS))
     {
-      break;
+      return HAL_OK;
     }
   }
   if (boot_merged_clock_ready() != 0U)

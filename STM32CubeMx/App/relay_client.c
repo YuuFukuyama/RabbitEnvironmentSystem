@@ -223,9 +223,10 @@ static const char *boot_csv_start(const char *body)
   return mark;
 }
 
-/* 年,月,日,時,分[,notifyMode] の CSV を読む。 */
-static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *month, uint16_t *day,
-                                uint16_t *hour, uint16_t *minute, uint8_t *mode)
+/* 年,月,日,時,分,notifyMode の CSV を 6 フィールド全部読む。 */
+static uint8_t parse_boot_array_strict(const char *body, uint16_t *year, uint16_t *month,
+                                       uint16_t *day, uint16_t *hour, uint16_t *minute,
+                                       uint8_t *mode)
 {
   const char *mark;
   uint8_t index;
@@ -246,11 +247,6 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
     }
     if ((*mark < '0') || (*mark > '9'))
     {
-      if (index == 5U)
-      {
-        values[5] = 0U;
-        break;
-      }
       return 0U;
     }
     number = 0U;
@@ -278,42 +274,33 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
     {
       if (*mark != ',')
       {
-        if (index == 4U)
-        {
-          values[5] = 0U;
-          index = 5U;
-          break;
-        }
         return 0U;
       }
       mark++;
     }
-    else if ((*mark != ']') && (*mark != '\0') && (*mark != '\r') && (*mark != '\n'))
+    else if ((*mark != '\0') && (*mark != '\r') && (*mark != '\n') && (*mark != ']'))
     {
       return 0U;
     }
   }
-  if (index < 4U)
-  {
-    return 0U;
-  }
-  if (index == 4U)
-  {
-    values[5] = 0U;
-  }
   if (values[0] < 100U)
   {
     values[0] = (uint16_t)(values[0] + 2000U);
+  }
+  if ((values[0] < 2000U) || (values[0] > 2099U) || (values[1] < 1U) || (values[1] > 12U) ||
+      (values[2] < 1U) || (values[2] > 31U) || (values[3] > 23U) || (values[4] > 59U))
+  {
+    return 0U;
+  }
+  if ((values[5] != 0U) && (values[5] != 1U))
+  {
+    return 0U;
   }
   *year = values[0];
   *month = values[1];
   *day = values[2];
   *hour = values[3];
   *minute = values[4];
-  if ((values[5] != 0U) && (values[5] != 1U))
-  {
-    return 0U;
-  }
   *mode = (uint8_t)values[5];
   return 1U;
 }
@@ -329,7 +316,7 @@ static HAL_StatusTypeDef apply_clock_from_body(const char *body)
   uint16_t second;
   uint8_t mode;
 
-  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
+  if (parse_boot_array_strict(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
   {
     second = 0U;
     return apply_rtc_fields(year, month, day, hour, minute, second);
@@ -357,7 +344,7 @@ static uint8_t parse_mode(const char *body, uint8_t *mode)
   uint16_t hour;
   uint16_t minute;
 
-  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, mode) != 0U)
+  if (parse_boot_array_strict(body, &year, &month, &day, &hour, &minute, mode) != 0U)
   {
     return 1U;
   }
@@ -420,7 +407,7 @@ static void boot_fetch_from_body(const char *body, uint8_t rtc_ok)
     boot_fetch_store(NULL, 0U, rtc_ok, 0U, 0U, 0U, 0U, 0U, 0U);
     return;
   }
-  if (parse_boot_array(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
+  if (parse_boot_array_strict(body, &year, &month, &day, &hour, &minute, &mode) != 0U)
   {
     boot_fetch_store(body, 1U, rtc_ok, year, (uint8_t)month, (uint8_t)day, (uint8_t)hour,
                      (uint8_t)minute, mode);
