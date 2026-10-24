@@ -13,6 +13,7 @@ const HISTORY_KEY = "measurements";
 const HISTORY_LIMIT = 1008;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LINE_TEXT_LIMIT = 5000;
+const LINE_MONTHLY_LIMIT = 200;
 const DETAIL_BUBBLES = 5;
 const DETAIL_OVERFLOW = "古い記録は1回の送信に収まりませんでした。";
 
@@ -186,7 +187,7 @@ async function deviceMeasurement(request, env) {
         await pushAlertFiltered(env, ids, row.record, text);
       } else {
         const ids = await readIdList(env.NotifyUsers, BOOT_NOTIFY_KEY);
-        await pushText(env.CHANNEL_ACCESS_TOKEN, ids, text);
+        await pushText(env, ids, text);
       }
     } catch {
       // 履歴は残っている。LINE の失敗で本体に再送させない。
@@ -320,7 +321,7 @@ async function pushAlertFiltered(env, ids, record, text) {
   if (toSend.length === 0) {
     return;
   }
-  await pushText(env.CHANNEL_ACCESS_TOKEN, toSend, text);
+  await pushText(env, toSend, text);
   await writeLastAlertPushes(env.NotifyUsers, nextLast);
 }
 
@@ -364,10 +365,48 @@ function alertPushSnapshot(record) {
   };
 }
 
+// 当月の push 通数を LINE から取得する。失敗時は null。
+async function fetchMonthlyUsage(token) {
+  if (typeof token !== "string" || token.length === 0) {
+    return null;
+  }
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/quota/consumption", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const data = await res.json();
+    if (!Number.isFinite(data.totalUsage) || data.totalUsage < 0) {
+      return null;
+    }
+    return data.totalUsage;
+  } catch {
+    return null;
+  }
+}
+
+// push 本文の末尾に当月通数行を付ける。5000 文字を超えるときは付けない。
+function appendQuotaSuffix(text, used, limit) {
+  const suffix = `\n\n(今月 ${used}/${limit})`;
+  const combined = text + suffix;
+  if (combined.length > LINE_TEXT_LIMIT) {
+    return text;
+  }
+  return combined;
+}
+
 // 同じ文面を利用者へ push する。
-async function pushText(token, ids, text) {
+async function pushText(env, ids, text) {
   if (!ids || ids.length === 0) {
     return;
+  }
+  const token = env.CHANNEL_ACCESS_TOKEN;
+  let bodyText = text;
+  const usage = await fetchMonthlyUsage(token);
+  if (usage !== null) {
+    bodyText = appendQuotaSuffix(text, usage + ids.length, LINE_MONTHLY_LIMIT);
   }
   await fetch("https://api.line.me/v2/bot/message/multicast", {
     method: "POST",
@@ -377,7 +416,7 @@ async function pushText(token, ids, text) {
     },
     body: JSON.stringify({
       to: ids.slice(0, 500),
-      messages: [{ type: "text", text }],
+      messages: [{ type: "text", text: bodyText }],
     }),
   });
 }
