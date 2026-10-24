@@ -565,7 +565,7 @@ static uint8_t at_put_u16(uint16_t *n, uint16_t value)
 }
 
 /* HTTP ヘッダ。トークンはコマンド行に載せない。 */
-static uint8_t at_http_head[160];
+static uint8_t at_http_head[192];
 
 /* at_http_head に文字列を足す。 */
 static uint8_t at_head_text(uint16_t *n, const char *text)
@@ -639,10 +639,6 @@ static HAL_StatusTypeDef at_http_auth(const char *token, uint8_t boot_ops)
     return HAL_ERROR;
   }
   if (at_head_text(&n, "Accept-Encoding: identity\r\n") == 0U)
-  {
-    return HAL_ERROR;
-  }
-  if (at_head_text(&n, "Cache-Control: no-cache\r\n") == 0U)
   {
     return HAL_ERROR;
   }
