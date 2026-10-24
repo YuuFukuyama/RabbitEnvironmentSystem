@@ -11,6 +11,7 @@ extern UART_HandleTypeDef huart1;
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_BOOT_PAYLOAD_MAX   1024U
+#define AT_BOOT_IDLE_MS       800U
 #define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -304,23 +305,122 @@ static uint8_t at_uart_is_error(void)
   return 0U;
 }
 
-/* +HTTPCLIENT:<size>,<data> の data 部を boot_payload へ足す。 */
+/* CR LF を飛ばす。 */
+static const char *boot_skip_crlf(const char *cursor)
+{
+  while ((cursor != NULL) && ((cursor[0] == '\r') || (cursor[0] == '\n')))
+  {
+    cursor++;
+  }
+  return cursor;
+}
+
+/* cursor から最大 want バイトを payload へ足す。改行は跨ぐ。 */
+static void boot_payload_append_from_cursor(const char **cursor, uint32_t want, const char *rx_end)
+{
+  uint32_t copied;
+
+  if ((cursor == NULL) || (*cursor == NULL) || (rx_end == NULL))
+  {
+    return;
+  }
+  copied = 0U;
+  while ((copied < want) && (*cursor < rx_end) && (**cursor != '\0'))
+  {
+    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+    {
+      break;
+    }
+    if ((*cursor[0] == '\r') || (*cursor[0] == '\n'))
+    {
+      *cursor = boot_skip_crlf(*cursor);
+      continue;
+    }
+    boot_payload[boot_payload_len] = (uint8_t)(*cursor[0]);
+    boot_payload_len++;
+    boot_payload[boot_payload_len] = 0U;
+    (*cursor)++;
+    copied++;
+  }
+}
+
+/* 連結結果または at_rx から JSON オブジェクトだけを切り出す。 */
+static void boot_payload_finalize_json(const char *rx)
+{
+  const char *start;
+  const char *end;
+  const char *search;
+  uint32_t len;
+
+  search = (char *)boot_payload;
+  if (boot_payload_len > 0U)
+  {
+    start = strchr(search, '{');
+    if (start != NULL)
+    {
+      end = strrchr(start, '}');
+      if ((end != NULL) && (end > start))
+      {
+        len = (uint32_t)(end - start + 1U);
+        if (len >= AT_BOOT_PAYLOAD_MAX)
+        {
+          len = AT_BOOT_PAYLOAD_MAX - 1U;
+        }
+        if (start != search)
+        {
+          memmove(boot_payload, start, len);
+        }
+        boot_payload_len = (uint16_t)len;
+        boot_payload[len] = 0U;
+        return;
+      }
+    }
+  }
+  start = strchr(rx, '{');
+  if (start == NULL)
+  {
+    return;
+  }
+  end = strrchr(start, '}');
+  if ((end == NULL) || (end <= start))
+  {
+    return;
+  }
+  len = (uint32_t)(end - start + 1U);
+  if (len >= AT_BOOT_PAYLOAD_MAX)
+  {
+    len = AT_BOOT_PAYLOAD_MAX - 1U;
+  }
+  memcpy(boot_payload, start, len);
+  boot_payload_len = (uint16_t)len;
+  boot_payload[len] = 0U;
+}
+
+/* +HTTPCLIENT / +HTTPCGET の size と data を連結する。行跨ぎとカンマ無しに対応。 */
 static void boot_merge_http_payload(void)
 {
   const char *rx;
+  const char *rx_end;
   const char *cursor;
   const char *line;
-  const char *comma;
-  const char *payload;
+  const char *colon;
+  const char *mark;
   const char *hc;
   const char *hg;
-  uint16_t index;
+  const char *chunk;
+  uint32_t size;
+  uint32_t digits;
 
   rx = (char *)at_rx;
+  rx_end = rx;
+  while ((rx_end[0] != '\0') && (rx_end < (char *)at_rx + sizeof(at_rx)))
+  {
+    rx_end++;
+  }
   boot_payload_len = 0U;
   boot_payload[0] = 0U;
   cursor = rx;
-  while ((cursor != NULL) && (cursor[0] != '\0'))
+  while ((cursor != NULL) && (cursor < rx_end) && (cursor[0] != '\0'))
   {
     hc = strstr(cursor, "+HTTPCLIENT");
     hg = strstr(cursor, "+HTTPCGET");
@@ -337,68 +437,67 @@ static void boot_merge_http_payload(void)
     {
       line = hg;
     }
-    if (line == NULL)
+    if ((line == NULL) || (line >= rx_end))
     {
       break;
     }
-    comma = strchr(line, ',');
-    if (comma == NULL)
+    colon = strchr(line, ':');
+    if (colon == NULL)
     {
-      cursor = line + 1U;
+      cursor = line + 11U;
       continue;
     }
-    payload = comma + 1;
-    index = 0U;
-    while ((payload[index] != '\0') && (payload[index] != '\r') && (payload[index] != '\n'))
+    mark = colon + 1;
+    size = 0U;
+    digits = 0U;
+    while ((mark < rx_end) && (mark[0] >= '0') && (mark[0] <= '9'))
     {
-      if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
-      {
-        break;
-      }
-      boot_payload[boot_payload_len] = (uint8_t)payload[index];
-      boot_payload_len++;
-      index++;
+      size = (size * 10U) + (uint32_t)(mark[0] - '0');
+      mark++;
+      digits++;
     }
-    boot_payload[boot_payload_len] = 0U;
-    cursor = payload + index;
-    if ((payload[index] == '\r') || (payload[index] == '\n'))
+    if (digits == 0U)
     {
-      cursor++;
-      if ((payload[index] == '\r') && (payload[index + 1U] == '\n'))
+      cursor = line + 11U;
+      continue;
+    }
+    if ((mark < rx_end) && (mark[0] == ','))
+    {
+      chunk = mark + 1;
+      if (size == 0U)
       {
-        cursor++;
+        while ((chunk < rx_end) && (chunk[0] != '\0') && (chunk[0] != '\r') && (chunk[0] != '\n'))
+        {
+          if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+          {
+            break;
+          }
+          boot_payload[boot_payload_len] = (uint8_t)chunk[0];
+          boot_payload_len++;
+          chunk++;
+        }
+        boot_payload[boot_payload_len] = 0U;
+        cursor = boot_skip_crlf(chunk);
       }
+      else
+      {
+        boot_payload_append_from_cursor(&chunk, size, rx_end);
+        cursor = chunk;
+      }
+    }
+    else
+    {
+      chunk = boot_skip_crlf(mark);
+      if (size == 0U)
+      {
+        cursor = line + 11U;
+        continue;
+      }
+      boot_payload_append_from_cursor(&chunk, size, rx_end);
+      cursor = chunk;
     }
   }
-  {
-    const char *start;
-    const char *end;
-    uint32_t len;
-
-    if (strchr((char *)boot_payload, '{') != NULL &&
-        strstr((char *)boot_payload, "\"month\":") != NULL)
-    {
-      return;
-    }
-    start = strchr(rx, '{');
-    if (start == NULL)
-    {
-      return;
-    }
-    end = strrchr(rx, '}');
-    if ((end == NULL) || (end <= start))
-    {
-      return;
-    }
-    len = (uint32_t)(end - start + 1U);
-    if (len >= AT_BOOT_PAYLOAD_MAX)
-    {
-      len = AT_BOOT_PAYLOAD_MAX - 1U;
-    }
-    memcpy(boot_payload, start, len);
-    boot_payload_len = (uint16_t)len;
-    boot_payload[len] = 0U;
-  }
+  boot_payload_finalize_json(rx);
 }
 
 /* boot 応答の探索は連結後を優先する。 */
@@ -575,15 +674,27 @@ static uint8_t at_rx_has_boot_json(void)
   return 0U;
 }
 
-/* boot GET の本文が at_rx に載るまで待つ。OK 後もタイムアウトまで読む。 */
+/* boot GET の本文が at_rx に載るまで待つ。OK 後も分割 URC を読む。 */
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
+  uint32_t last_activity;
+  uint8_t seen_ok;
+  uint8_t seen_http;
+  uint16_t prev_got;
 
   t0 = HAL_GetTick();
+  last_activity = t0;
+  seen_ok = 0U;
+  seen_http = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
+    prev_got = *got;
     at_take_rx(got);
+    if (*got > prev_got)
+    {
+      last_activity = HAL_GetTick();
+    }
     if (strstr((char *)at_rx, "SEND FAIL") != NULL)
     {
       return HAL_ERROR;
@@ -592,9 +703,23 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
+    if (strstr((char *)at_rx, "OK") != NULL)
+    {
+      seen_ok = 1U;
+    }
+    if ((strstr((char *)at_rx, "+HTTPCLIENT") != NULL) ||
+        (strstr((char *)at_rx, "+HTTPCGET") != NULL))
+    {
+      seen_http = 1U;
+    }
     if (at_rx_has_boot_json() != 0U)
     {
       return HAL_OK;
+    }
+    if ((seen_ok != 0U) && (seen_http != 0U) &&
+        ((HAL_GetTick() - last_activity) >= AT_BOOT_IDLE_MS))
+    {
+      break;
     }
   }
   if (at_rx_has_boot_json() != 0U)
