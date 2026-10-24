@@ -10,6 +10,7 @@ extern UART_HandleTypeDef huart1;
 #define AT_RSP_TIMEOUT_MS  1000U
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
+#define AT_BOOT_OK_IDLE_MS 200U
 #define AT_CMD_MAX         240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -371,7 +372,7 @@ uint8_t At_HttpBootRxDiag(void)
   return boot_rx_diag;
 }
 
-/* 起動時 ops 応答の JSON 本文が載ったか。 */
+/* 起動時 ops 応答の JSON 本文が載ったか。分割 +HTTPCLIENT も at_rx 全体を見る。 */
 static uint8_t at_rx_has_boot_json(void)
 {
   if (strstr((char *)at_rx, "\"time\":\"") == NULL)
@@ -385,14 +386,20 @@ static uint8_t at_rx_has_boot_json(void)
   return 1U;
 }
 
-/* boot GET の本文が at_rx に載るまで待つ。複数行の +HTTPCLIENT も読む。 */
+/* boot GET の本文が at_rx に載るまで待つ。OK より time を優先し分割 +HTTPCLIENT も読む。 */
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
-  uint8_t saw_http;
+  uint32_t t_ok_idle;
+  uint16_t got_at_ok;
+  uint8_t ok_seen;
+  uint8_t idle_armed;
 
-  saw_http = 0U;
   t0 = HAL_GetTick();
+  ok_seen = 0U;
+  idle_armed = 0U;
+  got_at_ok = 0U;
+  t_ok_idle = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
     at_take_rx(got);
@@ -404,29 +411,28 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
-    if ((strstr((char *)at_rx, "+HTTPCLIENT") != NULL) ||
-        (strstr((char *)at_rx, "+HTTPCGET") != NULL))
-    {
-      saw_http = 1U;
-    }
     if (at_rx_has_boot_json() != 0U)
     {
       return HAL_OK;
     }
-    if ((saw_http != 0U) && (strstr((char *)at_rx, "\r\nOK") != NULL))
+    if (ok_seen == 0U && strstr((char *)at_rx, "\r\nOK") != NULL)
     {
-      uint32_t t_ok;
-
-      t_ok = HAL_GetTick();
-      while ((HAL_GetTick() - t_ok) < 800U && *got < (sizeof(at_rx) - 1U))
+      ok_seen = 1U;
+      got_at_ok = *got;
+      t_ok_idle = HAL_GetTick();
+      idle_armed = 1U;
+    }
+    if (idle_armed != 0U)
+    {
+      if (*got != got_at_ok)
       {
-        at_take_rx(got);
-        if (at_rx_has_boot_json() != 0U)
-        {
-          return HAL_OK;
-        }
+        got_at_ok = *got;
+        t_ok_idle = HAL_GetTick();
       }
-      break;
+      else if ((HAL_GetTick() - t_ok_idle) >= AT_BOOT_OK_IDLE_MS)
+      {
+        return HAL_ERROR;
+      }
     }
   }
   if (at_rx_has_boot_json() != 0U)
