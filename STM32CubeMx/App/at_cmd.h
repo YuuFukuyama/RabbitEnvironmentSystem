@@ -17,6 +17,9 @@ HAL_StatusTypeDef At_HttpAuth(const char *token);
 /* HTTPS GET を行い、応答を At_HttpResponse に残す。 */
 HAL_StatusTypeDef At_HttpGet(const char *url);
 
+/* 起動時 ops 用 GET。JSON が at_rx に載るまで待つ。 */
+HAL_StatusTypeDef At_HttpGetBoot(const char *url);
+
 /* HTTPS POST の本文を送り、応答を At_HttpResponse に残す。 */
 HAL_StatusTypeDef At_HttpPost(const char *url, const char *body);
 

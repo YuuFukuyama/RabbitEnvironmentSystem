@@ -276,6 +276,49 @@ static HAL_StatusTypeDef at_wait_mark(uint16_t *got, const char *mark, uint32_t 
   return HAL_ERROR;
 }
 
+/* 起動時 ops 応答の JSON と OK が揃ったか。 */
+static uint8_t at_rx_has_boot_json(void)
+{
+  if (strstr((char *)at_rx, "\"notifyMode\":") == NULL)
+  {
+    return 0U;
+  }
+  if (strstr((char *)at_rx, "OK") == NULL)
+  {
+    return 0U;
+  }
+  return 1U;
+}
+
+/* boot GET の本文が at_rx に載るまで待つ。 */
+static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
+{
+  uint32_t t0;
+
+  t0 = HAL_GetTick();
+  while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
+  {
+    at_take_rx(got);
+    if (strstr((char *)at_rx, "SEND FAIL") != NULL)
+    {
+      return HAL_ERROR;
+    }
+    if (strstr((char *)at_rx, "ERROR") != NULL)
+    {
+      return HAL_ERROR;
+    }
+    if (at_rx_has_boot_json() != 0U)
+    {
+      return HAL_OK;
+    }
+  }
+  if (at_rx_has_boot_json() != 0U)
+  {
+    return HAL_OK;
+  }
+  return HAL_ERROR;
+}
+
 /* コマンドを送り、mark を待つ。 */
 static HAL_StatusTypeDef at_command_mark(const char *cmd, const char *mark, uint32_t timeout_ms)
 {
@@ -400,6 +443,10 @@ HAL_StatusTypeDef At_HttpAuth(const char *token)
   {
     return HAL_ERROR;
   }
+  if (at_head_text(&n, "Accept-Encoding: identity\r\n") == 0U)
+  {
+    return HAL_ERROR;
+  }
   at_http_head[n] = 0U;
 
   at_tx[0] = 0U;
@@ -454,6 +501,54 @@ HAL_StatusTypeDef At_HttpGet(const char *url)
     return HAL_ERROR;
   }
   return at_command_mark((char *)at_tx, "OK", AT_HTTP_TIMEOUT_MS);
+}
+
+HAL_StatusTypeDef At_HttpGetBoot(const char *url)
+{
+  uint16_t n;
+  uint16_t got;
+  uint32_t len;
+  uint8_t line[AT_CMD_MAX + 3U];
+
+  if ((url == NULL) || (url[0] == '\0'))
+  {
+    return HAL_ERROR;
+  }
+  n = 0U;
+  at_tx[0] = 0U;
+  if (at_put_raw(&n, "AT+HTTPCLIENT=2,1,\"") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, url) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, "\",,,2") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  len = 0U;
+  while (((char *)at_tx)[len] != '\0')
+  {
+    len++;
+    if (len > AT_CMD_MAX)
+    {
+      return HAL_ERROR;
+    }
+  }
+  memcpy(line, at_tx, len);
+  line[len] = (uint8_t)'\r';
+  line[len + 1U] = (uint8_t)'\n';
+
+  memset(at_rx, 0, sizeof(at_rx));
+  got = 0U;
+  __HAL_UART_CLEAR_OREFLAG(&huart1);
+  if (at_send_bytes(line, len + 2U, AT_HTTP_TIMEOUT_MS, &got) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+  return at_wait_boot_json(&got, AT_HTTP_TIMEOUT_MS);
 }
 
 HAL_StatusTypeDef At_HttpPost(const char *url, const char *body)

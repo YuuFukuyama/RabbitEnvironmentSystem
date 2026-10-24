@@ -216,7 +216,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     return 0U;
   }
-  if (At_HttpGet(url) != HAL_OK)
+  if (At_HttpGetBoot(url) != HAL_OK)
   {
     return 0U;
   }
