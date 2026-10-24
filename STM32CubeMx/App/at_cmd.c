@@ -10,7 +10,6 @@ extern UART_HandleTypeDef huart1;
 #define AT_RSP_TIMEOUT_MS  1000U
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
-#define AT_BOOT_OK_IDLE_MS    200U
 #define AT_BOOT_PAYLOAD_MAX   1024U
 #define AT_CMD_MAX            240U
 
@@ -457,37 +456,29 @@ uint8_t At_HttpBootRxDiag(void)
   return boot_rx_diag;
 }
 
-/* 起動時 ops 応答の JSON 本文が載ったか。連結した data 部を見る。 */
+/* 起動時 ops 応答の JSON 本文が載ったか。連結 data と at_rx の両方を見る。 */
 static uint8_t at_rx_has_boot_json(void)
 {
   const char *view;
 
   view = boot_scan_view();
-  if (strstr(view, "\"time\":\"") == NULL)
+  if (strstr(view, "\"time\":\"") != NULL && strstr(view, "+09:00") != NULL)
   {
-    return 0U;
+    return 1U;
   }
-  if (strstr(view, "+09:00") == NULL)
+  if (strstr((char *)at_rx, "\"time\":\"") != NULL && strstr((char *)at_rx, "+09:00") != NULL)
   {
-    return 0U;
+    return 1U;
   }
-  return 1U;
+  return 0U;
 }
 
-/* boot GET の本文が at_rx に載るまで待つ。OK より time を優先し分割 +HTTPCLIENT も読む。 */
+/* boot GET の本文が at_rx に載るまで待つ。OK 後もタイムアウトまで読む。 */
 static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
 {
   uint32_t t0;
-  uint32_t t_ok_idle;
-  uint16_t got_at_ok;
-  uint8_t ok_seen;
-  uint8_t idle_armed;
 
   t0 = HAL_GetTick();
-  ok_seen = 0U;
-  idle_armed = 0U;
-  got_at_ok = 0U;
-  t_ok_idle = 0U;
   while ((HAL_GetTick() - t0) < timeout_ms && *got < (sizeof(at_rx) - 1U))
   {
     at_take_rx(got);
@@ -502,25 +493,6 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     if (at_rx_has_boot_json() != 0U)
     {
       return HAL_OK;
-    }
-    if (ok_seen == 0U && strstr((char *)at_rx, "\r\nOK") != NULL)
-    {
-      ok_seen = 1U;
-      got_at_ok = *got;
-      t_ok_idle = HAL_GetTick();
-      idle_armed = 1U;
-    }
-    if (idle_armed != 0U)
-    {
-      if (*got != got_at_ok)
-      {
-        got_at_ok = *got;
-        t_ok_idle = HAL_GetTick();
-      }
-      else if ((HAL_GetTick() - t_ok_idle) >= AT_BOOT_OK_IDLE_MS)
-      {
-        return HAL_ERROR;
-      }
     }
   }
   if (at_rx_has_boot_json() != 0U)
@@ -667,6 +639,10 @@ static HAL_StatusTypeDef at_http_auth(const char *token, uint8_t boot_ops)
     return HAL_ERROR;
   }
   if (at_head_text(&n, "Accept-Encoding: identity\r\n") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_head_text(&n, "Cache-Control: no-cache\r\n") == 0U)
   {
     return HAL_ERROR;
   }

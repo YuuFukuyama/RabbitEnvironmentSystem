@@ -146,9 +146,9 @@ async function deviceOps(request, env, url) {
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
   const body = {
-    ops: [],
     time: japanIso(),
     notifyMode,
+    ops: [],
   };
   return Response.json(body, {
     headers: {
