@@ -71,4 +71,4 @@ CubeMX は USART1 を非同期で初期化する。`MX_USART1_UART_Init` が `HA
 
 ## 起動時の HTTP（時刻同期）
 
-起動時の操作取得は `GET /v1/ops?boot=1` である。`AT+HTTPCHEAD` に `Authorization`、`Content-Type: application/json`、`Accept-Encoding: identity` を載せる。`At_HttpGetBoot` は UART 受信バッファ 1024 バイトに `"time":"` と `+09:00` が現れるまで待つ。暦が無効なとき LCD の時刻欄は `--:--` の代わりに、直近の同期失敗に応じて `SYNC?`（HTTP/JSON 未取得）、`PARSE`（JSON 解釈不可）、`NORTC`（RTC 未初期化）、`RTC!`（RTC 書込み失敗）を出す。
+起動時の操作取得は `GET /v1/ops?boot=1` である。`AT+HTTPCHEAD` に `Authorization`、`Content-Type: application/json`、`Accept-Encoding: identity` を載せる。`At_HttpGetBoot` は UART 受信バッファ 1024 バイトに `"time":"` と `+09:00` が現れるまで待つ。暦が無効なとき LCD の時刻欄（5 文字）は、直近の同期失敗に応じて `AUTH?`（ヘッダ設定）、`EMPTY`（応答ほぼ無し）、`HTTP?`（`+HTTPCLIENT` のみ）、`NOTIM`（JSON らしきが `time` 無し）、`GZIP?`（圧縮等の非テキスト）、`SYNC?`（その他 HTTP 失敗）、`PARSE`、`NORTC`、`RTC!` を出す。

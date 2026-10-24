@@ -1,6 +1,7 @@
 /* USART1 で AT を送り、エコーを読みながら応答を見る。 */
 
 #include "at_cmd.h"
+#include "app_clock.h"
 #include "wifi_secret.h"
 #include <string.h>
 
@@ -15,6 +16,8 @@ extern UART_HandleTypeDef huart1;
 static uint8_t at_rx[1024];
 /* CWJAP のコマンド。パスワードを含むのでログへ出さない。 */
 static uint8_t at_tx[AT_CMD_MAX + 1U];
+/* boot GET 失敗時の at_rx 分類。 */
+static uint8_t boot_rx_diag;
 
 /* 受信に OK があり、mark があればそれも含む。 */
 static uint8_t at_rsp_ok(const char *mark)
@@ -297,6 +300,73 @@ static uint8_t at_uart_is_error(void)
   return 0U;
 }
 
+/* boot GET 失敗時に at_rx を分類する。 */
+static uint8_t classify_boot_rx(void)
+{
+  const char *rx;
+  const char *client;
+  const char *payload;
+  uint16_t length;
+  uint16_t index;
+  uint8_t non_text;
+
+  rx = (char *)at_rx;
+  length = 0U;
+  while ((rx[length] != '\0') && (length < (sizeof(at_rx) - 1U)))
+  {
+    length++;
+  }
+  if (length < 8U)
+  {
+    return APP_CLOCK_BOOT_DIAG_EMPTY;
+  }
+  client = strstr(rx, "+HTTPCLIENT");
+  if (client != NULL)
+  {
+    if (strstr(rx, "\"time\":\"") != NULL)
+    {
+      return APP_CLOCK_BOOT_DIAG_HTTP;
+    }
+    if (strstr(rx, "{") != NULL || strstr(rx, "\"ops\"") != NULL)
+    {
+      return APP_CLOCK_BOOT_DIAG_NOTIM;
+    }
+    payload = strchr(client, ',');
+    if (payload != NULL)
+    {
+      payload++;
+      non_text = 0U;
+      for (index = 0U; (payload[index] != '\0') && (payload[index] != '\r') && (index < 48U); index++)
+      {
+        if ((payload[index] == '{') || (payload[index] == '"'))
+        {
+          non_text = 0U;
+          break;
+        }
+        if ((uint8_t)payload[index] < 0x20U || (uint8_t)payload[index] > 0x7EU)
+        {
+          non_text = 1U;
+        }
+      }
+      if (non_text != 0U)
+      {
+        return APP_CLOCK_BOOT_DIAG_GZIP;
+      }
+    }
+    return APP_CLOCK_BOOT_DIAG_HTTPCL;
+  }
+  if ((strstr(rx, "OK") != NULL) && (length < 40U))
+  {
+    return APP_CLOCK_BOOT_DIAG_EMPTY;
+  }
+  return APP_CLOCK_BOOT_DIAG_HTTP;
+}
+
+uint8_t At_HttpBootRxDiag(void)
+{
+  return boot_rx_diag;
+}
+
 /* 起動時 ops 応答の JSON 本文が載ったか。 */
 static uint8_t at_rx_has_boot_json(void)
 {
@@ -565,11 +635,19 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *url)
   memset(at_rx, 0, sizeof(at_rx));
   got = 0U;
   __HAL_UART_CLEAR_OREFLAG(&huart1);
+  boot_rx_diag = APP_CLOCK_BOOT_DIAG_HTTP;
   if (at_send_bytes(line, len + 2U, AT_HTTP_TIMEOUT_MS, &got) != HAL_OK)
   {
+    boot_rx_diag = APP_CLOCK_BOOT_DIAG_EMPTY;
     return HAL_ERROR;
   }
-  return at_wait_boot_json(&got, AT_HTTP_TIMEOUT_MS);
+  if (at_wait_boot_json(&got, AT_HTTP_TIMEOUT_MS) != HAL_OK)
+  {
+    boot_rx_diag = classify_boot_rx();
+    return HAL_ERROR;
+  }
+  boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+  return HAL_OK;
 }
 
 HAL_StatusTypeDef At_HttpPost(const char *url, const char *body)

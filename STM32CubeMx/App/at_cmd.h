@@ -20,6 +20,9 @@ HAL_StatusTypeDef At_HttpGet(const char *url);
 /* 起動時 ops 用 GET。JSON が at_rx に載るまで待つ。 */
 HAL_StatusTypeDef At_HttpGetBoot(const char *url);
 
+/* boot GET 失敗時の at_rx 分類。AppClock_SetBootDiag に渡す。 */
+uint8_t At_HttpBootRxDiag(void);
+
 /* HTTPS POST の本文を送り、応答を At_HttpResponse に残す。 */
 HAL_StatusTypeDef At_HttpPost(const char *url, const char *body);
 

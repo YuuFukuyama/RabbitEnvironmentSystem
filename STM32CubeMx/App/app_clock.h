@@ -10,6 +10,11 @@
 #define APP_CLOCK_BOOT_DIAG_PARSE 2U
 #define APP_CLOCK_BOOT_DIAG_NO_HW 3U
 #define APP_CLOCK_BOOT_DIAG_RTC   4U
+#define APP_CLOCK_BOOT_DIAG_AUTH  5U
+#define APP_CLOCK_BOOT_DIAG_EMPTY 6U
+#define APP_CLOCK_BOOT_DIAG_HTTPCL 7U
+#define APP_CLOCK_BOOT_DIAG_NOTIM 8U
+#define APP_CLOCK_BOOT_DIAG_GZIP  9U
 
 /* LSE と RTC が使えるときだけ 1。 */
 void AppClock_SetHardwareReady(uint8_t ready);

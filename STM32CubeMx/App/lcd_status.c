@@ -178,6 +178,26 @@ static const char *clock_diag_hhmm(uint8_t boot_diag)
   {
     return "RTC! ";
   }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_AUTH)
+  {
+    return "AUTH?";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_EMPTY)
+  {
+    return "EMPTY";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_HTTPCL)
+  {
+    return "HTTP?";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_NOTIM)
+  {
+    return "NOTIM";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_GZIP)
+  {
+    return "GZIP?";
+  }
   return "--:--";
 }
 
