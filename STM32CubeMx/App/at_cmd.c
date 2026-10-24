@@ -485,6 +485,63 @@ uint8_t At_HttpBootRxDiag(void)
   return boot_rx_diag;
 }
 
+/* view と at_rx のどちらかに JSON キーがあるか。 */
+static uint8_t boot_key_seen(const char *key)
+{
+  const char *view;
+
+  view = boot_scan_view();
+  if (strstr(view, key) != NULL)
+  {
+    return 1U;
+  }
+  if (strstr((char *)at_rx, key) != NULL)
+  {
+    return 1U;
+  }
+  return 0U;
+}
+
+/* boot GET 受信内容を AppClock へ渡す。 */
+static void boot_publish_snap(uint16_t got)
+{
+  uint8_t keys;
+  uint8_t urc;
+
+  boot_merge_http_payload();
+  keys = 0U;
+  if (boot_key_seen("\"year\"") != 0U)
+  {
+    keys |= APP_CLOCK_BOOT_SNAP_YEAR;
+  }
+  if (boot_key_seen("\"month\"") != 0U)
+  {
+    keys |= APP_CLOCK_BOOT_SNAP_MONTH;
+  }
+  if (boot_key_seen("\"day\"") != 0U)
+  {
+    keys |= APP_CLOCK_BOOT_SNAP_DAY;
+  }
+  if (boot_key_seen("\"hour\"") != 0U)
+  {
+    keys |= APP_CLOCK_BOOT_SNAP_HOUR;
+  }
+  if (boot_key_seen("\"minute\"") != 0U)
+  {
+    keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
+  }
+  urc = APP_CLOCK_BOOT_URC_NONE;
+  if (strstr((char *)at_rx, "+HTTPCLIENT") != NULL)
+  {
+    urc = APP_CLOCK_BOOT_URC_CLIENT;
+  }
+  else if (strstr((char *)at_rx, "+HTTPCGET") != NULL)
+  {
+    urc = APP_CLOCK_BOOT_URC_GET;
+  }
+  AppClock_SetBootSnap(got, boot_payload_len, keys, urc);
+}
+
 /* 数値暦キーが揃っているか。 */
 static uint8_t boot_has_numeric_clock(const char *text)
 {
@@ -822,13 +879,16 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   if (at_send_bytes(line, len + 2U, AT_HTTP_TIMEOUT_MS, &got) != HAL_OK)
   {
     boot_rx_diag = APP_CLOCK_BOOT_DIAG_EMPTY;
+    boot_publish_snap(got);
     return HAL_ERROR;
   }
   if (at_wait_boot_json(&got, AT_HTTP_TIMEOUT_MS) != HAL_OK)
   {
     boot_rx_diag = classify_boot_rx();
+    boot_publish_snap(got);
     return HAL_ERROR;
   }
+  boot_publish_snap(got);
   boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
   return HAL_OK;
 }

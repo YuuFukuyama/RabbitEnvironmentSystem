@@ -201,6 +201,81 @@ static const char *clock_diag_hhmm(uint8_t boot_diag)
   return "--:--";
 }
 
+/* 暦無効かつ boot 失敗でスナップショットがある。 */
+static uint8_t boot_debug_active(const LcdClock *clock)
+{
+  if (clock->valid != 0U)
+  {
+    return 0U;
+  }
+  if (clock->boot_diag == APP_CLOCK_BOOT_DIAG_NONE)
+  {
+    return 0U;
+  }
+  if (AppClock_BootSnapValid() == 0U)
+  {
+    return 0U;
+  }
+  return 1U;
+}
+
+/* キーが見えていれば letter、無ければ -。 */
+static uint8_t append_boot_key(char *dst, uint8_t pos, uint8_t key_mask, uint8_t bit, char letter)
+{
+  if (pos < LCD_COLS)
+  {
+    if ((key_mask & bit) != 0U)
+    {
+      dst[pos] = letter;
+    }
+    else
+    {
+      dst[pos] = '-';
+    }
+    pos++;
+  }
+  return pos;
+}
+
+/* boot UART 診断の 2 行（案 B）。 */
+static void build_boot_debug_lines(char *line0, char *line1, uint8_t boot_diag)
+{
+  uint16_t rx_got;
+  uint16_t payload_len;
+  uint8_t key_mask;
+  uint8_t http_urc;
+  uint8_t pos;
+
+  AppClock_ReadBootSnap(&rx_got, &payload_len, &key_mask, &http_urc);
+  pos = copy_text(line0, 0U, clock_diag_hhmm(boot_diag));
+  pos = copy_text(line0, pos, "  ");
+  pos = append_boot_key(line0, pos, key_mask, APP_CLOCK_BOOT_SNAP_YEAR, 'Y');
+  pos = append_boot_key(line0, pos, key_mask, APP_CLOCK_BOOT_SNAP_MONTH, 'm');
+  pos = append_boot_key(line0, pos, key_mask, APP_CLOCK_BOOT_SNAP_DAY, 'd');
+  pos = append_boot_key(line0, pos, key_mask, APP_CLOCK_BOOT_SNAP_HOUR, 'H');
+  pos = append_boot_key(line0, pos, key_mask, APP_CLOCK_BOOT_SNAP_MINUTE, 'm');
+  finish_line(line0, pos);
+
+  pos = 0U;
+  if (http_urc == APP_CLOCK_BOOT_URC_CLIENT)
+  {
+    pos = copy_text(line1, pos, "CL");
+  }
+  else if (http_urc == APP_CLOCK_BOOT_URC_GET)
+  {
+    pos = copy_text(line1, pos, "HG");
+  }
+  else
+  {
+    pos = copy_text(line1, pos, "--");
+  }
+  pos = copy_text(line1, pos, " ");
+  pos = append_u16(line1, pos, rx_got);
+  pos = copy_text(line1, pos, " pl ");
+  pos = append_u16(line1, pos, payload_len);
+  finish_line(line1, pos);
+}
+
 /* MM/DD HH:MM またはプレースホルダを継ぎ足す。 */
 static uint8_t append_mmdd_hhmm(char *dst, uint8_t pos, const LcdClock *clock)
 {
@@ -282,6 +357,12 @@ static void build_normal_lines(char *line0, char *line1, const EnvView *view, co
 {
   uint8_t pos;
 
+  if (boot_debug_active(clock) != 0U)
+  {
+    build_boot_debug_lines(line0, line1, clock->boot_diag);
+    return;
+  }
+
   finish_line(line0, append_mmdd_hhmm(line0, 0U, clock));
   pos = append_temp(line1, 0U, view->temp_deci_c);
   pos = copy_text(line1, pos, " ");
@@ -336,7 +417,12 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
   clock.boot_diag = AppClock_GetBootDiag();
   AppClock_Read(&clock.valid, &clock.mon, &clock.day, &clock.hour, &clock.min);
 
-  if (EnvView_IsAlert(view) == 0U)
+  if (boot_debug_active(&clock) != 0U)
+  {
+    build_boot_debug_lines(line0, line1, clock.boot_diag);
+    status = ST7032_SetIconS56(hi2c, 1U);
+  }
+  else if (EnvView_IsAlert(view) == 0U)
   {
     build_normal_lines(line0, line1, view, &clock);
     status = ST7032_SetIconS56(hi2c, 0U);
