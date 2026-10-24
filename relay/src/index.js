@@ -150,7 +150,12 @@ async function deviceOps(request, env, url) {
     body.time = japanIso();
     body.notifyMode = notifyMode;
   }
-  return Response.json(body);
+  return Response.json(body, {
+    headers: {
+      "Content-Encoding": "identity",
+      "Cache-Control": "no-transform",
+    },
+  });
 }
 
 // 起動時に ON だった利用者を、内容が変わったときだけ書く。

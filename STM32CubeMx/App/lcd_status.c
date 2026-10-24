@@ -13,6 +13,7 @@
 typedef struct
 {
   uint8_t valid;
+  uint8_t boot_diag;
   uint8_t mon;
   uint8_t day;
   uint8_t hour;
@@ -158,12 +159,39 @@ static void finish_line(char *line, uint8_t pos)
   line[LCD_COLS] = '\0';
 }
 
+/* 暦無効時の 5 文字プレースホルダ。 */
+static const char *clock_diag_hhmm(uint8_t boot_diag)
+{
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_HTTP)
+  {
+    return "SYNC?";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_PARSE)
+  {
+    return "PARSE";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_NO_HW)
+  {
+    return "NORTC";
+  }
+  if (boot_diag == APP_CLOCK_BOOT_DIAG_RTC)
+  {
+    return "RTC! ";
+  }
+  return "--:--";
+}
+
 /* MM/DD HH:MM またはプレースホルダを継ぎ足す。 */
 static uint8_t append_mmdd_hhmm(char *dst, uint8_t pos, const LcdClock *clock)
 {
   if (clock->valid == 0U)
   {
-    return copy_text(dst, pos, "--/-- --:--");
+    if (clock->boot_diag == APP_CLOCK_BOOT_DIAG_NONE)
+    {
+      return copy_text(dst, pos, "--/-- --:--");
+    }
+    pos = copy_text(dst, pos, "--/-- ");
+    return copy_text(dst, pos, clock_diag_hhmm(clock->boot_diag));
   }
   pos = append_u8_2d(dst, pos, clock->mon);
   pos = copy_text(dst, pos, "/");
@@ -179,7 +207,7 @@ static uint8_t append_hhmm(char *dst, uint8_t pos, const LcdClock *clock)
 {
   if (clock->valid == 0U)
   {
-    return copy_text(dst, pos, "--:--");
+    return copy_text(dst, pos, clock_diag_hhmm(clock->boot_diag));
   }
   pos = append_u8_2d(dst, pos, clock->hour);
   pos = copy_text(dst, pos, ":");
@@ -285,6 +313,7 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
     return HAL_ERROR;
   }
 
+  clock.boot_diag = AppClock_GetBootDiag();
   AppClock_Read(&clock.valid, &clock.mon, &clock.day, &clock.hour, &clock.min);
 
   if (EnvView_IsAlert(view) == 0U)

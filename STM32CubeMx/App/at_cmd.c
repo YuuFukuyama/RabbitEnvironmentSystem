@@ -12,7 +12,7 @@ extern UART_HandleTypeDef huart1;
 #define AT_CMD_MAX         240U
 
 /* 1 回の応答。測定周期の外からは使わない。 */
-static uint8_t at_rx[512];
+static uint8_t at_rx[1024];
 /* CWJAP のコマンド。パスワードを含むのでログへ出さない。 */
 static uint8_t at_tx[AT_CMD_MAX + 1U];
 
@@ -276,14 +276,35 @@ static HAL_StatusTypeDef at_wait_mark(uint16_t *got, const char *mark, uint32_t 
   return HAL_ERROR;
 }
 
-/* 起動時 ops 応答の JSON と OK が揃ったか。 */
+/* AT コマンドとしての ERROR か。本文中の ERROR 文字列は無視する。 */
+static uint8_t at_uart_is_error(void)
+{
+  const char *rx;
+
+  rx = (char *)at_rx;
+  if (strncmp(rx, "ERROR", 5) == 0)
+  {
+    return 1U;
+  }
+  if (strstr(rx, "\r\nERROR") != NULL)
+  {
+    return 1U;
+  }
+  if (strstr(rx, "\nERROR") != NULL)
+  {
+    return 1U;
+  }
+  return 0U;
+}
+
+/* 起動時 ops 応答の JSON 本文が載ったか。 */
 static uint8_t at_rx_has_boot_json(void)
 {
-  if (strstr((char *)at_rx, "\"notifyMode\":") == NULL)
+  if (strstr((char *)at_rx, "\"time\":\"") == NULL)
   {
     return 0U;
   }
-  if (strstr((char *)at_rx, "OK") == NULL)
+  if (strstr((char *)at_rx, "+09:00") == NULL)
   {
     return 0U;
   }
@@ -303,7 +324,7 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       return HAL_ERROR;
     }
-    if (strstr((char *)at_rx, "ERROR") != NULL)
+    if (at_uart_is_error() != 0U)
     {
       return HAL_ERROR;
     }

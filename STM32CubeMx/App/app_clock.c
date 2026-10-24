@@ -9,10 +9,26 @@ extern RTC_HandleTypeDef hrtc;
 #define APP_CLOCK_BKP_MAGIC 0xA5C1U
 
 static uint8_t hw_ready;
+static uint8_t boot_diag;
 
 void AppClock_SetHardwareReady(uint8_t ready)
 {
   hw_ready = ready;
+}
+
+void AppClock_SetBootDiag(uint8_t code)
+{
+  boot_diag = code;
+}
+
+uint8_t AppClock_GetBootDiag(void)
+{
+  return boot_diag;
+}
+
+uint8_t AppClock_HwReady(void)
+{
+  return hw_ready;
 }
 
 void AppClock_MarkSynced(void)

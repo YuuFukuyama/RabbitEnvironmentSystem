@@ -214,20 +214,24 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   }
   if (At_HttpAuth(DEVICE_TOKEN) != HAL_OK)
   {
+    AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_HTTP);
     return 0U;
   }
   if (At_HttpGetBoot(url) != HAL_OK)
   {
+    AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_HTTP);
     return 0U;
   }
   body = At_HttpResponse();
   if (parse_mode(body, &mode) == 0U)
   {
+    AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
     return 0U;
   }
   time_mark = strstr(body, "\"time\":\"");
   if (time_mark == NULL)
   {
+    AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
     return 0U;
   }
   time_mark += 8;
@@ -241,8 +245,17 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   }
   if (apply_time(time_mark) != HAL_OK)
   {
+    if ((AppClock_HwReady() == 0U) || (hrtc.Instance != RTC))
+    {
+      AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_NO_HW);
+    }
+    else
+    {
+      AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_RTC);
+    }
     return 0U;
   }
+  AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_NONE);
   AppClock_MarkSynced();
   new_sec = read_counter();
   EnvJudge_SetNotifyMode(mode);
