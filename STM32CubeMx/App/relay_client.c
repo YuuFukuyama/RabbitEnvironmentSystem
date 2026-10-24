@@ -100,48 +100,59 @@ static uint32_t read_counter(void)
   return (((uint32_t)high1) << 16) | low;
 }
 
-/* 桁を読む。 */
-static uint8_t take_digits(const char *text, uint8_t count, uint16_t *value)
+/* JSON のキー直後の整数を読む。 */
+static uint8_t parse_json_u16(const char *body, const char *key, uint16_t *value)
 {
-  uint8_t index;
-  uint16_t number;
+  const char *mark;
+  uint32_t number;
+  uint8_t digits;
 
-  number = 0U;
-  for (index = 0U; index < count; index++)
+  mark = strstr(body, key);
+  if (mark == NULL)
   {
-    if ((text[index] < '0') || (text[index] > '9'))
+    return 0U;
+  }
+  mark += strlen(key);
+  while ((*mark == ' ') || (*mark == '\t'))
+  {
+    mark++;
+  }
+  if (*mark != ':')
+  {
+    return 0U;
+  }
+  mark++;
+  while ((*mark == ' ') || (*mark == '\t'))
+  {
+    mark++;
+  }
+  number = 0U;
+  digits = 0U;
+  while ((*mark >= '0') && (*mark <= '9'))
+  {
+    number = (number * 10U) + (uint32_t)(*mark - '0');
+    if (number > 65535U)
     {
       return 0U;
     }
-    number = (uint16_t)((number * 10U) + (uint16_t)(text[index] - '0'));
+    mark++;
+    digits++;
   }
-  *value = number;
+  if (digits == 0U)
+  {
+    return 0U;
+  }
+  *value = (uint16_t)number;
   return 1U;
 }
 
-/* 日本時間を RTC の暦へ書く。 */
-static HAL_StatusTypeDef apply_time(const char *iso)
+/* 暦要素を RTC へ書く。 */
+static HAL_StatusTypeDef apply_rtc_fields(uint16_t year, uint16_t month, uint16_t day, uint16_t hour,
+                                        uint16_t minute, uint16_t second)
 {
-  uint16_t year;
-  uint16_t month;
-  uint16_t day;
-  uint16_t hour;
-  uint16_t minute;
-  uint16_t second;
   RTC_TimeTypeDef rtc_time;
   RTC_DateTypeDef rtc_date;
 
-  if ((iso[4] != '-') || (iso[7] != '-') || (iso[10] != 'T') || (iso[13] != ':') ||
-      (iso[16] != ':') || (strncmp(iso + 19, "+09:00", 6) != 0))
-  {
-    return HAL_ERROR;
-  }
-  if ((take_digits(iso, 4U, &year) == 0U) || (take_digits(iso + 5, 2U, &month) == 0U) ||
-      (take_digits(iso + 8, 2U, &day) == 0U) || (take_digits(iso + 11, 2U, &hour) == 0U) ||
-      (take_digits(iso + 14, 2U, &minute) == 0U) || (take_digits(iso + 17, 2U, &second) == 0U))
-  {
-    return HAL_ERROR;
-  }
   if ((year < 2000U) || (year > 2099U) || (month < 1U) || (month > 12U) || (day < 1U) ||
       (day > 31U) || (hour > 23U) || (minute > 59U) || (second > 59U))
   {
@@ -172,6 +183,29 @@ static HAL_StatusTypeDef apply_time(const char *iso)
   return HAL_OK;
 }
 
+/* 応答 JSON の数値暦を RTC へ書く。 */
+static HAL_StatusTypeDef apply_clock_from_body(const char *body)
+{
+  uint16_t year;
+  uint16_t month;
+  uint16_t day;
+  uint16_t hour;
+  uint16_t minute;
+  uint16_t second;
+
+  if ((parse_json_u16(body, "\"year\"", &year) == 0U) ||
+      (parse_json_u16(body, "\"month\"", &month) == 0U) ||
+      (parse_json_u16(body, "\"day\"", &day) == 0U) ||
+      (parse_json_u16(body, "\"hour\"", &hour) == 0U) ||
+      (parse_json_u16(body, "\"minute\"", &minute) == 0U))
+  {
+    return HAL_ERROR;
+  }
+  second = 0U;
+  (void)parse_json_u16(body, "\"second\"", &second);
+  return apply_rtc_fields(year, month, day, hour, minute, second);
+}
+
 /* 応答から notifyMode を読む。 */
 static uint8_t parse_mode(const char *body, uint8_t *mode)
 {
@@ -198,7 +232,6 @@ static uint8_t parse_mode(const char *body, uint8_t *mode)
 uint8_t Relay_TakeBoot(uint32_t *synced_sec)
 {
   const char *body;
-  const char *time_mark;
   uint8_t mode;
   uint32_t old_sec;
   uint32_t new_sec;
@@ -223,13 +256,6 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
     return 0U;
   }
-  time_mark = strstr(body, "\"time\":\"");
-  if (time_mark == NULL)
-  {
-    AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
-    return 0U;
-  }
-  time_mark += 8;
   if (hrtc.Instance == RTC)
   {
     old_sec = read_counter();
@@ -238,7 +264,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     old_sec = 0U;
   }
-  if (apply_time(time_mark) != HAL_OK)
+  if (apply_clock_from_body(body) != HAL_OK)
   {
     if ((AppClock_HwReady() == 0U) || (hrtc.Instance != RTC))
     {

@@ -376,7 +376,7 @@ static void boot_merge_http_payload(void)
     uint32_t len;
 
     if (strchr((char *)boot_payload, '{') != NULL &&
-        strstr((char *)boot_payload, "\"time\":\"") != NULL)
+        strstr((char *)boot_payload, "\"month\":") != NULL)
     {
       return;
     }
@@ -401,7 +401,7 @@ static void boot_merge_http_payload(void)
   }
 }
 
-/* time 探索は連結後を優先する。 */
+/* boot 応答の探索は連結後を優先する。 */
 static const char *boot_scan_view(void)
 {
   boot_merge_http_payload();
@@ -441,7 +441,7 @@ static uint8_t classify_boot_rx(void)
   }
   if (client != NULL)
   {
-    if (strstr(view, "\"time\":\"") != NULL)
+    if (strstr(view, "\"month\":") != NULL)
     {
       return APP_CLOCK_BOOT_DIAG_HTTP;
     }
@@ -485,17 +485,33 @@ uint8_t At_HttpBootRxDiag(void)
   return boot_rx_diag;
 }
 
-/* 起動時 ops 応答の JSON 本文が載ったか。連結 data と at_rx の両方を見る。 */
+/* 数値暦キーが揃っているか。 */
+static uint8_t boot_has_numeric_clock(const char *text)
+{
+  if (text == NULL)
+  {
+    return 0U;
+  }
+  if (strstr(text, "\"year\":") == NULL || strstr(text, "\"month\":") == NULL ||
+      strstr(text, "\"day\":") == NULL || strstr(text, "\"hour\":") == NULL ||
+      strstr(text, "\"minute\":") == NULL)
+  {
+    return 0U;
+  }
+  return 1U;
+}
+
+/* 起動時 ops 応答に同期に使える時刻があるか。 */
 static uint8_t at_rx_has_boot_json(void)
 {
   const char *view;
 
   view = boot_scan_view();
-  if (strstr(view, "\"time\":\"") != NULL && strstr(view, "+09:00") != NULL)
+  if (boot_has_numeric_clock(view) != 0U)
   {
     return 1U;
   }
-  if (strstr((char *)at_rx, "\"time\":\"") != NULL && strstr((char *)at_rx, "+09:00") != NULL)
+  if (boot_has_numeric_clock((char *)at_rx) != 0U)
   {
     return 1U;
   }

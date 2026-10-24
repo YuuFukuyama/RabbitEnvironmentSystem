@@ -120,20 +120,38 @@ function rejectDevice(request, env) {
   return null;
 }
 
-// 日本時間の ISO 8601 を返す。
-function japanIso(date = new Date()) {
+// 日本時間の暦要素を数値で返す。
+function japanClockParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
+    month: "numeric",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(date);
   const get = (type) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}+09:00`;
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+    second: Number(get("second")),
+  };
+}
+
+// 日本時間の ISO 8601 を返す。
+function japanIso(date = new Date()) {
+  const clock = japanClockParts(date);
+  const month = String(clock.month).padStart(2, "0");
+  const day = String(clock.day).padStart(2, "0");
+  const hour = String(clock.hour).padStart(2, "0");
+  const minute = String(clock.minute).padStart(2, "0");
+  const second = String(clock.second).padStart(2, "0");
+  return `${clock.year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
 }
 
 // 起動時の操作取得。認証済み GET には常に時刻と通知モードを載せる（本体は boot 同期のときだけ呼ぶ）。
@@ -145,8 +163,14 @@ async function deviceOps(request, env, url) {
   const notifyIds = await alwaysUserIds(env.NotifyUsers);
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
+  const clock = japanClockParts();
   const body = {
-    time: japanIso(),
+    year: clock.year,
+    month: clock.month,
+    day: clock.day,
+    hour: clock.hour,
+    minute: clock.minute,
+    second: clock.second,
     notifyMode,
     ops: [],
   };
