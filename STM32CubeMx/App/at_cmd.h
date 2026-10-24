@@ -32,4 +32,7 @@ HAL_StatusTypeDef At_HttpPost(const char *url, const char *body);
 /* 直前の HTTP 応答。 */
 const char *At_HttpResponse(void);
 
+/* 直前の boot GET。+HTTPCLIENT の data 部を連結した JSON。 */
+const char *At_HttpBootBody(void);
+
 #endif

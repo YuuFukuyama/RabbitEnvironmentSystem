@@ -10,11 +10,15 @@ extern UART_HandleTypeDef huart1;
 #define AT_RSP_TIMEOUT_MS  1000U
 #define AT_JOIN_TIMEOUT_MS 20000U
 #define AT_HTTP_TIMEOUT_MS 20000U
-#define AT_BOOT_OK_IDLE_MS 200U
-#define AT_CMD_MAX         240U
+#define AT_BOOT_OK_IDLE_MS    200U
+#define AT_BOOT_PAYLOAD_MAX   1024U
+#define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
 static uint8_t at_rx[2048];
+/* +HTTPCLIENT / +HTTPCGET 各行の data 部を連結する。 */
+static uint8_t boot_payload[AT_BOOT_PAYLOAD_MAX];
+static uint16_t boot_payload_len;
 /* CWJAP のコマンド。パスワードを含むのでログへ出さない。 */
 static uint8_t at_tx[AT_CMD_MAX + 1U];
 /* boot GET 失敗時の at_rx 分類。 */
@@ -301,10 +305,90 @@ static uint8_t at_uart_is_error(void)
   return 0U;
 }
 
+/* +HTTPCLIENT:<size>,<data> の data 部を boot_payload へ足す。 */
+static void boot_merge_http_payload(void)
+{
+  const char *rx;
+  const char *cursor;
+  const char *line;
+  const char *comma;
+  const char *payload;
+  const char *hc;
+  const char *hg;
+  uint16_t index;
+
+  rx = (char *)at_rx;
+  boot_payload_len = 0U;
+  boot_payload[0] = 0U;
+  cursor = rx;
+  while ((cursor != NULL) && (cursor[0] != '\0'))
+  {
+    hc = strstr(cursor, "+HTTPCLIENT");
+    hg = strstr(cursor, "+HTTPCGET");
+    line = NULL;
+    if ((hc != NULL) && (hg != NULL))
+    {
+      line = (hc < hg) ? hc : hg;
+    }
+    else if (hc != NULL)
+    {
+      line = hc;
+    }
+    else
+    {
+      line = hg;
+    }
+    if (line == NULL)
+    {
+      break;
+    }
+    comma = strchr(line, ',');
+    if (comma == NULL)
+    {
+      cursor = line + 1U;
+      continue;
+    }
+    payload = comma + 1;
+    index = 0U;
+    while ((payload[index] != '\0') && (payload[index] != '\r') && (payload[index] != '\n'))
+    {
+      if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+      {
+        break;
+      }
+      boot_payload[boot_payload_len] = (uint8_t)payload[index];
+      boot_payload_len++;
+      index++;
+    }
+    boot_payload[boot_payload_len] = 0U;
+    cursor = payload + index;
+    if ((payload[index] == '\r') || (payload[index] == '\n'))
+    {
+      cursor++;
+      if ((payload[index] == '\r') && (payload[index + 1U] == '\n'))
+      {
+        cursor++;
+      }
+    }
+  }
+}
+
+/* time 探索は連結後を優先する。 */
+static const char *boot_scan_view(void)
+{
+  boot_merge_http_payload();
+  if (boot_payload_len > 0U)
+  {
+    return (char *)boot_payload;
+  }
+  return (char *)at_rx;
+}
+
 /* boot GET 失敗時に at_rx を分類する。 */
 static uint8_t classify_boot_rx(void)
 {
   const char *rx;
+  const char *view;
   const char *client;
   const char *payload;
   uint16_t length;
@@ -312,6 +396,7 @@ static uint8_t classify_boot_rx(void)
   uint8_t non_text;
 
   rx = (char *)at_rx;
+  view = boot_scan_view();
   length = 0U;
   while ((rx[length] != '\0') && (length < (sizeof(at_rx) - 1U)))
   {
@@ -328,11 +413,11 @@ static uint8_t classify_boot_rx(void)
   }
   if (client != NULL)
   {
-    if (strstr(rx, "\"time\":\"") != NULL)
+    if (strstr(view, "\"time\":\"") != NULL)
     {
       return APP_CLOCK_BOOT_DIAG_HTTP;
     }
-    if (strstr(rx, "{") != NULL || strstr(rx, "\"ops\"") != NULL)
+    if (strstr(view, "{") != NULL || strstr(view, "\"ops\"") != NULL)
     {
       return APP_CLOCK_BOOT_DIAG_NOTIM;
     }
@@ -372,14 +457,17 @@ uint8_t At_HttpBootRxDiag(void)
   return boot_rx_diag;
 }
 
-/* 起動時 ops 応答の JSON 本文が載ったか。分割 +HTTPCLIENT も at_rx 全体を見る。 */
+/* 起動時 ops 応答の JSON 本文が載ったか。連結した data 部を見る。 */
 static uint8_t at_rx_has_boot_json(void)
 {
-  if (strstr((char *)at_rx, "\"time\":\"") == NULL)
+  const char *view;
+
+  view = boot_scan_view();
+  if (strstr(view, "\"time\":\"") == NULL)
   {
     return 0U;
   }
-  if (strstr((char *)at_rx, "+09:00") == NULL)
+  if (strstr(view, "+09:00") == NULL)
   {
     return 0U;
   }
@@ -623,6 +711,23 @@ const char *At_HttpResponse(void)
   return (const char *)at_rx;
 }
 
+const char *At_HttpBootBody(void)
+{
+  const char *json;
+
+  boot_merge_http_payload();
+  if (boot_payload_len == 0U)
+  {
+    return (const char *)at_rx;
+  }
+  json = strchr((char *)boot_payload, '{');
+  if (json != NULL)
+  {
+    return json;
+  }
+  return (char *)boot_payload;
+}
+
 HAL_StatusTypeDef At_HttpGet(const char *url)
 {
   uint16_t n;
@@ -692,6 +797,8 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   line[len + 1U] = (uint8_t)'\n';
 
   memset(at_rx, 0, sizeof(at_rx));
+  boot_payload_len = 0U;
+  boot_payload[0] = 0U;
   got = 0U;
   __HAL_UART_CLEAR_OREFLAG(&huart1);
   boot_rx_diag = APP_CLOCK_BOOT_DIAG_HTTP;

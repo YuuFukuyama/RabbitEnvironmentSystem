@@ -217,16 +217,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
     AppClock_SetBootDiag(At_HttpBootRxDiag());
     return 0U;
   }
-  body = At_HttpResponse();
-  {
-    const char *json;
-
-    json = strchr(body, '{');
-    if (json != NULL)
-    {
-      body = json;
-    }
-  }
+  body = At_HttpBootBody();
   if (parse_mode(body, &mode) == 0U)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_PARSE);
