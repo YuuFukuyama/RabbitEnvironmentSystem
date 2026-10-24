@@ -305,33 +305,61 @@ static uint8_t at_uart_is_error(void)
   return 0U;
 }
 
-/* 応答 URC の +HTTPCLIENT: / +HTTPCGET:。エコー AT+HTTPCLIENT= は含めない。 */
+/* URC 行の先頭か。AT+HTTPCLIENT: エコー内の部分一致を除く。 */
+static uint8_t boot_urc_at_line_start(const char *line, const char *rx_start)
+{
+  if (line == rx_start)
+  {
+    return 1U;
+  }
+  if ((line > rx_start) && ((line[-1] == '\n') || (line[-1] == '\r')))
+  {
+    return 1U;
+  }
+  return 0U;
+}
+
+/* 応答 URC の +HTTPCLIENT: / +HTTPCGET:。行頭のみ。 */
 static const char *boot_find_http_urc(const char *cursor)
 {
   const char *hc;
   const char *hg;
   const char *line;
+  const char *rx_start;
 
   if (cursor == NULL)
   {
     return NULL;
   }
-  hc = strstr(cursor, "+HTTPCLIENT:");
-  hg = strstr(cursor, "+HTTPCGET:");
-  line = NULL;
-  if ((hc != NULL) && (hg != NULL))
+  rx_start = (char *)at_rx;
+  while (cursor[0] != '\0')
   {
-    line = (hc < hg) ? hc : hg;
+    hc = strstr(cursor, "+HTTPCLIENT:");
+    hg = strstr(cursor, "+HTTPCGET:");
+    line = NULL;
+    if ((hc != NULL) && (hg != NULL))
+    {
+      line = (hc < hg) ? hc : hg;
+    }
+    else if (hc != NULL)
+    {
+      line = hc;
+    }
+    else
+    {
+      line = hg;
+    }
+    if (line == NULL)
+    {
+      return NULL;
+    }
+    if (boot_urc_at_line_start(line, rx_start) != 0U)
+    {
+      return line;
+    }
+    cursor = line + 1U;
   }
-  else if (hc != NULL)
-  {
-    line = hc;
-  }
-  else
-  {
-    line = hg;
-  }
-  return line;
+  return NULL;
 }
 
 /* CR LF を飛ばす。 */
@@ -581,7 +609,7 @@ static uint8_t classify_boot_rx(void)
     }
     return APP_CLOCK_BOOT_DIAG_HTTPCL;
   }
-  if (strstr(rx, "+HTTPCLIENT=") != NULL)
+  if ((strstr(rx, "+HTTPCLIENT=") != NULL) || (strstr(rx, "AT+HTTPCLIENT") != NULL))
   {
     return APP_CLOCK_BOOT_DIAG_HTTPCL;
   }
@@ -642,18 +670,30 @@ static void boot_publish_snap(uint16_t got)
   {
     keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
   }
-  urc = APP_CLOCK_BOOT_URC_NONE;
-  if (strstr((char *)at_rx, "+HTTPCLIENT:") != NULL)
   {
-    urc = APP_CLOCK_BOOT_URC_CLIENT;
-  }
-  else if (strstr((char *)at_rx, "+HTTPCGET:") != NULL)
-  {
-    urc = APP_CLOCK_BOOT_URC_GET;
-  }
-  else if (strstr((char *)at_rx, "+HTTPCLIENT=") != NULL)
-  {
-    urc = APP_CLOCK_BOOT_URC_ECHO;
+    const char *urc_line;
+
+    urc = APP_CLOCK_BOOT_URC_NONE;
+    urc_line = boot_find_http_urc((char *)at_rx);
+    if (urc_line != NULL)
+    {
+      if (strncmp(urc_line, "+HTTPCLIENT:", 12) == 0)
+      {
+        urc = APP_CLOCK_BOOT_URC_CLIENT;
+      }
+      else
+      {
+        urc = APP_CLOCK_BOOT_URC_GET;
+      }
+    }
+    else if (strstr((char *)at_rx, "+HTTPCLIENT=") != NULL)
+    {
+      urc = APP_CLOCK_BOOT_URC_ECHO;
+    }
+    else if (strstr((char *)at_rx, "AT+HTTPCLIENT") != NULL)
+    {
+      urc = APP_CLOCK_BOOT_URC_ECHO;
+    }
   }
   AppClock_SetBootSnap(got, boot_payload_len, keys, urc);
 }
