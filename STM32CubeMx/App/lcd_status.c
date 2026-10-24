@@ -1,12 +1,23 @@
 /* 16 桁×2 行の環境表示を ST7032 に書く。 */
 
 #include "lcd_status.h"
+#include "app_clock.h"
 #include "env_judge.h"
 #include "st7032.h"
 
 #define LCD_LINE0 0x00U
 #define LCD_LINE1 0x40U
 #define LCD_COLS  16U
+
+/* 暦 1 回分。LcdStatus_Show で読む。 */
+typedef struct
+{
+  uint8_t valid;
+  uint8_t mon;
+  uint8_t day;
+  uint8_t hour;
+  uint8_t min;
+} LcdClock;
 
 /* 16 桁以内で文字列を継ぎ足す。 */
 static uint8_t copy_text(char *dst, uint8_t pos, const char *text)
@@ -28,6 +39,26 @@ static uint8_t append_u8(char *dst, uint8_t pos, uint8_t value)
     value = 99U;
   }
   if ((value >= 10U) && (pos < LCD_COLS))
+  {
+    dst[pos] = (char)('0' + (value / 10U));
+    pos++;
+  }
+  if (pos < LCD_COLS)
+  {
+    dst[pos] = (char)('0' + (value % 10U));
+    pos++;
+  }
+  return pos;
+}
+
+/* 0〜99 を 2 桁で継ぎ足す。 */
+static uint8_t append_u8_2d(char *dst, uint8_t pos, uint8_t value)
+{
+  if (value >= 100U)
+  {
+    value = 99U;
+  }
+  if (pos < LCD_COLS)
   {
     dst[pos] = (char)('0' + (value / 10U));
     pos++;
@@ -127,37 +158,66 @@ static void finish_line(char *line, uint8_t pos)
   line[LCD_COLS] = '\0';
 }
 
-/* 総合危険度の表示名を返す。 */
-static const char *risk_text(EnvRisk risk)
+/* MM/DD HH:MM またはプレースホルダを継ぎ足す。 */
+static uint8_t append_mmdd_hhmm(char *dst, uint8_t pos, const LcdClock *clock)
+{
+  if (clock->valid == 0U)
+  {
+    return copy_text(dst, pos, "--/-- --:--");
+  }
+  pos = append_u8_2d(dst, pos, clock->mon);
+  pos = copy_text(dst, pos, "/");
+  pos = append_u8_2d(dst, pos, clock->day);
+  pos = copy_text(dst, pos, " ");
+  pos = append_u8_2d(dst, pos, clock->hour);
+  pos = copy_text(dst, pos, ":");
+  return append_u8_2d(dst, pos, clock->min);
+}
+
+/* HH:MM または --:-- を継ぎ足す。 */
+static uint8_t append_hhmm(char *dst, uint8_t pos, const LcdClock *clock)
+{
+  if (clock->valid == 0U)
+  {
+    return copy_text(dst, pos, "--:--");
+  }
+  pos = append_u8_2d(dst, pos, clock->hour);
+  pos = copy_text(dst, pos, ":");
+  return append_u8_2d(dst, pos, clock->min);
+}
+
+/* LCD 向けの危険度略称を返す。 */
+static const char *risk_text_lcd(EnvRisk risk)
 {
   if (risk == ENV_RISK_WARNING)
   {
-    return "WARNING";
+    return "WARN";
   }
   if (risk == ENV_RISK_DANGER)
   {
-    return "DANGER";
+    return "DANG";
   }
   if (risk == ENV_RISK_CRITICAL)
   {
-    return "CRITICAL";
+    return "CRIT";
   }
-  return "NORMAL";
+  return "NORM";
 }
 
-/* 1 行目に危険度かセンサー異常を書く。 */
-static void build_status_line(char *line, const EnvView *view)
+/* 1 行目に時刻、略称、継続分を書く。 */
+static void build_status_line(char *line, const EnvView *view, const LcdClock *clock)
 {
   uint8_t pos;
 
-  pos = 0U;
+  pos = append_hhmm(line, 0U, clock);
+  pos = copy_text(line, pos, " ");
   if (view->sensor_error != 0U)
   {
-    pos = copy_text(line, pos, "SENSOR ERROR");
+    pos = copy_text(line, pos, "S.ERR");
   }
   else
   {
-    pos = copy_text(line, pos, risk_text(view->risk));
+    pos = copy_text(line, pos, risk_text_lcd(view->risk));
   }
 
   if (view->show_minutes != 0U)
@@ -169,11 +229,16 @@ static void build_status_line(char *line, const EnvView *view)
   finish_line(line, pos);
 }
 
-/* NORMAL は上段を温度、下段を湿度にする。 */
-static void build_normal_lines(char *line0, char *line1, const EnvView *view)
+/* NORMAL は上段に日時、下段に温湿度を並べる。 */
+static void build_normal_lines(char *line0, char *line1, const EnvView *view, const LcdClock *clock)
 {
-  finish_line(line0, append_temp(line0, 0U, view->temp_deci_c));
-  finish_line(line1, append_hum(line1, 0U, view->hum_deci_rh));
+  uint8_t pos;
+
+  finish_line(line0, append_mmdd_hhmm(line0, 0U, clock));
+  pos = append_temp(line1, 0U, view->temp_deci_c);
+  pos = copy_text(line1, pos, " ");
+  pos = append_hum(line1, pos, view->hum_deci_rh);
+  finish_line(line1, pos);
 }
 
 /* 下段に温湿度を並べるか、NO DATA を書く。 */
@@ -212,6 +277,7 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
 {
   char line0[LCD_COLS + 1U];
   char line1[LCD_COLS + 1U];
+  LcdClock clock;
   HAL_StatusTypeDef status;
 
   if ((hi2c == NULL) || (view == NULL))
@@ -219,14 +285,16 @@ HAL_StatusTypeDef LcdStatus_Show(I2C_HandleTypeDef *hi2c, const EnvView *view)
     return HAL_ERROR;
   }
 
+  AppClock_Read(&clock.valid, &clock.mon, &clock.day, &clock.hour, &clock.min);
+
   if (EnvView_IsAlert(view) == 0U)
   {
-    build_normal_lines(line0, line1, view);
+    build_normal_lines(line0, line1, view, &clock);
     status = ST7032_SetIconS56(hi2c, 0U);
   }
   else
   {
-    build_status_line(line0, view);
+    build_status_line(line0, view, &clock);
     build_value_line(line1, view);
     status = ST7032_SetIconS56(hi2c, 1U);
   }

@@ -1,6 +1,7 @@
 /* 起動時に時刻と通知モードを取り、測定のたびに中継へ送る。 */
 
 #include "relay_client.h"
+#include "app_clock.h"
 #include "at_cmd.h"
 #include "env_judge.h"
 #include "wifi_link.h"
@@ -242,6 +243,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     return 0U;
   }
+  AppClock_MarkSynced();
   new_sec = read_counter();
   EnvJudge_SetNotifyMode(mode);
   boot_done = 1U;

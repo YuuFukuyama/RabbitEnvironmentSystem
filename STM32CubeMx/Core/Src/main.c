@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_clock.h"
 #include "app_cycle.h"
 #include "env_config.h"
 #include "st7032.h"
@@ -229,6 +230,7 @@ int main(void)
   {
     Error_Handler();
   }
+  AppClock_SetHardwareReady(rtc_ready);
   if (rtc_ready != 0U)
   {
     HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 0, 0);

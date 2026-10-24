@@ -53,6 +53,7 @@ endif()
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    App/app_clock.c
     App/st7032.c
     App/board_led.c
     App/env_judge.c

@@ -1,7 +1,7 @@
 #ifndef LCD_STATUS_H
 #define LCD_STATUS_H
 
-/* 環境状態を 16 桁×2 行の LCD に書く。 */
+/* 環境状態と日時を 16 桁×2 行の LCD に書く。 */
 
 #include "stm32f1xx_hal.h"
 #include "env_types.h"
