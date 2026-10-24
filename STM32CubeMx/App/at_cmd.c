@@ -415,6 +415,17 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     }
     if ((saw_http != 0U) && (strstr((char *)at_rx, "\r\nOK") != NULL))
     {
+      uint32_t t_ok;
+
+      t_ok = HAL_GetTick();
+      while ((HAL_GetTick() - t_ok) < 800U && *got < (sizeof(at_rx) - 1U))
+      {
+        at_take_rx(got);
+        if (at_rx_has_boot_json() != 0U)
+        {
+          return HAL_OK;
+        }
+      }
       break;
     }
   }
@@ -644,7 +655,8 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   }
   n = 0U;
   at_tx[0] = 0U;
-  if (at_put_raw(&n, "AT+HTTPCGET=\"https://") == 0U)
+  /* HTTPCGET は v3.3 で HTTPCHEAD が効かないことがある。POST と同じ HTTPCLIENT を使う。 */
+  if (at_put_raw(&n, "AT+HTTPCLIENT=2,0,\"https://") == 0U)
   {
     return HAL_ERROR;
   }
@@ -656,7 +668,7 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   {
     return HAL_ERROR;
   }
-  if (at_put_raw(&n, "\",512,2048,20000") == 0U)
+  if (at_put_raw(&n, "\",,,2") == 0U)
   {
     return HAL_ERROR;
   }

@@ -153,7 +153,8 @@ async function deviceOps(request, env, url) {
   return Response.json(body, {
     headers: {
       "Content-Encoding": "identity",
-      "Cache-Control": "no-transform",
+      "Cache-Control": "no-store, private, max-age=0, no-transform",
+      "X-Ops-With-Time": "1",
     },
   });
 }
