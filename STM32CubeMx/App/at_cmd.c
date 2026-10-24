@@ -609,6 +609,10 @@ static uint8_t classify_boot_rx(void)
     }
     return APP_CLOCK_BOOT_DIAG_HTTPCL;
   }
+  if (strstr(rx, "+HTTPERR:") != NULL)
+  {
+    return APP_CLOCK_BOOT_DIAG_HTTP;
+  }
   if ((strstr(rx, "+HTTPCLIENT=") != NULL) || (strstr(rx, "AT+HTTPCLIENT") != NULL))
   {
     return APP_CLOCK_BOOT_DIAG_HTTPCL;
@@ -1008,20 +1012,129 @@ HAL_StatusTypeDef At_HttpGet(const char *url)
   return at_command_mark((char *)at_tx, "OK", AT_HTTP_TIMEOUT_MS);
 }
 
-HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
+/* HTTPS の SNI を host に合わせる。 */
+static HAL_StatusTypeDef at_http_sni(const char *host)
 {
   uint16_t n;
-  uint16_t got;
-  uint32_t len;
-  uint8_t line[AT_CMD_MAX + 3U];
 
-  if ((host == NULL) || (host[0] == '\0') || (path == NULL) || (path[0] != '/'))
+  if ((host == NULL) || (host[0] == '\0'))
   {
     return HAL_ERROR;
   }
   n = 0U;
   at_tx[0] = 0U;
-  /* HTTPCGET は v3.3 で HTTPCHEAD が効かないことがある。POST と同じ HTTPCLIENT を使う。 */
+  if (at_put_raw(&n, "AT+HTTPCSNI=\"") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_escaped(&n, host) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put(&n, '"') == 0U)
+  {
+    return HAL_ERROR;
+  }
+  return at_command_mark((char *)at_tx, "OK", AT_RSP_TIMEOUT_MS);
+}
+
+/* boot GET 前に at_rx を空にする。 */
+static void at_boot_rx_reset(void)
+{
+  memset(at_rx, 0, sizeof(at_rx));
+  boot_payload_len = 0U;
+  boot_payload[0] = 0U;
+  __HAL_UART_CLEAR_OREFLAG(&huart1);
+}
+
+/* 組み立て済み AT 行を送り boot JSON を待つ。 */
+static HAL_StatusTypeDef at_boot_exec_cmd(uint16_t *got)
+{
+  uint32_t len;
+  uint8_t line[AT_CMD_MAX + 3U];
+
+  len = 0U;
+  while (((char *)at_tx)[len] != '\0')
+  {
+    len++;
+    if (len > AT_CMD_MAX)
+    {
+      return HAL_ERROR;
+    }
+  }
+  memcpy(line, at_tx, len);
+  line[len] = (uint8_t)'\r';
+  line[len + 1U] = (uint8_t)'\n';
+  if (at_send_bytes(line, len + 2U, AT_HTTP_TIMEOUT_MS, got) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+  return at_wait_boot_json(got, AT_HTTP_TIMEOUT_MS);
+}
+
+/* HTTPCGET で boot GET。HTTPCHEAD が効く。 */
+static HAL_StatusTypeDef at_boot_try_httpcget(const char *host, const char *path, uint16_t *got)
+{
+  uint16_t n;
+
+  n = 0U;
+  at_tx[0] = 0U;
+  if (at_put_raw(&n, "AT+HTTPCGET=\"https://") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, host) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, path) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, "\",2048,2048,20000") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  return at_boot_exec_cmd(got);
+}
+
+/* host/path 指定の HTTPCLIENT。URL だけより短い。 */
+static HAL_StatusTypeDef at_boot_try_httpclient_host(const char *host, const char *path, uint16_t *got)
+{
+  uint16_t n;
+
+  n = 0U;
+  at_tx[0] = 0U;
+  if (at_put_raw(&n, "AT+HTTPCLIENT=2,0,\"\",\"") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_escaped(&n, host) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, "\",\"") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_escaped(&n, path) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  if (at_put_raw(&n, "\",2") == 0U)
+  {
+    return HAL_ERROR;
+  }
+  return at_boot_exec_cmd(got);
+}
+
+/* 従来どおり URL 一体型の HTTPCLIENT。 */
+static HAL_StatusTypeDef at_boot_try_httpclient_url(const char *host, const char *path, uint16_t *got)
+{
+  uint16_t n;
+
+  n = 0U;
+  at_tx[0] = 0U;
   if (at_put_raw(&n, "AT+HTTPCLIENT=2,0,\"https://") == 0U)
   {
     return HAL_ERROR;
@@ -1038,40 +1151,56 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   {
     return HAL_ERROR;
   }
-  len = 0U;
-  while (((char *)at_tx)[len] != '\0')
-  {
-    len++;
-    if (len > AT_CMD_MAX)
-    {
-      return HAL_ERROR;
-    }
-  }
-  memcpy(line, at_tx, len);
-  line[len] = (uint8_t)'\r';
-  line[len + 1U] = (uint8_t)'\n';
+  return at_boot_exec_cmd(got);
+}
 
-  memset(at_rx, 0, sizeof(at_rx));
-  boot_payload_len = 0U;
-  boot_payload[0] = 0U;
+HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
+{
+  uint16_t got;
+  static uint8_t boot_echo_off;
+
+  if ((host == NULL) || (host[0] == '\0') || (path == NULL) || (path[0] != '/'))
+  {
+    return HAL_ERROR;
+  }
+  if (boot_echo_off == 0U)
+  {
+    (void)at_command("ATE0", NULL, AT_RSP_TIMEOUT_MS);
+    boot_echo_off = 1U;
+  }
+  (void)at_http_sni(host);
+
+  at_boot_rx_reset();
   got = 0U;
-  __HAL_UART_CLEAR_OREFLAG(&huart1);
   boot_rx_diag = APP_CLOCK_BOOT_DIAG_HTTP;
-  if (at_send_bytes(line, len + 2U, AT_HTTP_TIMEOUT_MS, &got) != HAL_OK)
+  if (at_boot_try_httpcget(host, path, &got) == HAL_OK)
   {
-    boot_rx_diag = APP_CLOCK_BOOT_DIAG_EMPTY;
     boot_publish_snap(got);
-    return HAL_ERROR;
+    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    return HAL_OK;
   }
-  if (at_wait_boot_json(&got, AT_HTTP_TIMEOUT_MS) != HAL_OK)
+
+  at_boot_rx_reset();
+  got = 0U;
+  if (at_boot_try_httpclient_host(host, path, &got) == HAL_OK)
   {
-    boot_rx_diag = classify_boot_rx();
     boot_publish_snap(got);
-    return HAL_ERROR;
+    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    return HAL_OK;
   }
+
+  at_boot_rx_reset();
+  got = 0U;
+  if (at_boot_try_httpclient_url(host, path, &got) == HAL_OK)
+  {
+    boot_publish_snap(got);
+    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    return HAL_OK;
+  }
+
+  boot_rx_diag = classify_boot_rx();
   boot_publish_snap(got);
-  boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
-  return HAL_OK;
+  return HAL_ERROR;
 }
 
 HAL_StatusTypeDef At_HttpPost(const char *url, const char *body)

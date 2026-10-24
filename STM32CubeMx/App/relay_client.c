@@ -240,7 +240,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
   {
     return 0U;
   }
-  if (At_HttpAuth(DEVICE_TOKEN) != HAL_OK)
+  if (At_HttpAuthBoot(DEVICE_TOKEN) != HAL_OK)
   {
     AppClock_SetBootDiag(APP_CLOCK_BOOT_DIAG_AUTH);
     return 0U;
