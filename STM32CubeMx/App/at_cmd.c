@@ -361,45 +361,6 @@ static const char *boot_find_http_urc(const char *cursor)
   return NULL;
 }
 
-/* CR LF を飛ばす。 */
-static const char *boot_skip_crlf(const char *cursor)
-{
-  while ((cursor != NULL) && ((cursor[0] == '\r') || (cursor[0] == '\n')))
-  {
-    cursor++;
-  }
-  return cursor;
-}
-
-/* cursor から最大 want バイトを payload へ足す。改行は跨ぐ。 */
-static void boot_payload_append_from_cursor(const char **cursor, uint32_t want, const char *rx_end)
-{
-  uint32_t copied;
-
-  if ((cursor == NULL) || (*cursor == NULL) || (rx_end == NULL))
-  {
-    return;
-  }
-  copied = 0U;
-  while ((copied < want) && (*cursor < rx_end) && (**cursor != '\0'))
-  {
-    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
-    {
-      break;
-    }
-    if ((*cursor[0] == '\r') || (*cursor[0] == '\n'))
-    {
-      *cursor = boot_skip_crlf(*cursor);
-      continue;
-    }
-    boot_payload[boot_payload_len] = (uint8_t)(*cursor[0]);
-    boot_payload_len++;
-    boot_payload[boot_payload_len] = 0U;
-    (*cursor)++;
-    copied++;
-  }
-}
-
 /* 連結結果または at_rx から JSON オブジェクトだけを切り出す。 */
 static void boot_payload_finalize_json(const char *rx)
 {
@@ -452,18 +413,42 @@ static void boot_payload_finalize_json(const char *rx)
   boot_payload[len] = 0U;
 }
 
-/* +HTTPCLIENT / +HTTPCGET の size と data を連結する。行跨ぎとカンマ無しに対応。 */
+/* URC 行の { から行末までを payload へ足す。 */
+static void boot_payload_append_json_line(const char *line, const char *rx_end)
+{
+  const char *cursor;
+  const char *brace;
+
+  if ((line == NULL) || (rx_end == NULL))
+  {
+    return;
+  }
+  brace = strchr(line, '{');
+  if (brace == NULL)
+  {
+    return;
+  }
+  cursor = brace;
+  while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\r') && (cursor[0] != '\n'))
+  {
+    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+    {
+      break;
+    }
+    boot_payload[boot_payload_len] = (uint8_t)cursor[0];
+    boot_payload_len++;
+    cursor++;
+  }
+  boot_payload[boot_payload_len] = 0U;
+}
+
+/* +HTTPCLIENT / +HTTPCGET 各行の JSON 部を連結する。 */
 static void boot_merge_http_payload(void)
 {
   const char *rx;
   const char *rx_end;
   const char *cursor;
   const char *line;
-  const char *colon;
-  const char *mark;
-  const char *chunk;
-  uint32_t size;
-  uint32_t digits;
 
   rx = (char *)at_rx;
   rx_end = rx;
@@ -481,60 +466,15 @@ static void boot_merge_http_payload(void)
     {
       break;
     }
-    colon = strchr(line, ':');
-    if (colon == NULL)
+    boot_payload_append_json_line(line, rx_end);
+    cursor = line + 12U;
+    while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\n'))
     {
-      cursor = line + 11U;
-      continue;
+      cursor++;
     }
-    mark = colon + 1;
-    size = 0U;
-    digits = 0U;
-    while ((mark < rx_end) && (mark[0] >= '0') && (mark[0] <= '9'))
+    if ((cursor < rx_end) && (cursor[0] == '\n'))
     {
-      size = (size * 10U) + (uint32_t)(mark[0] - '0');
-      mark++;
-      digits++;
-    }
-    if (digits == 0U)
-    {
-      cursor = line + 11U;
-      continue;
-    }
-    if ((mark < rx_end) && (mark[0] == ','))
-    {
-      chunk = mark + 1;
-      if (size == 0U)
-      {
-        while ((chunk < rx_end) && (chunk[0] != '\0') && (chunk[0] != '\r') && (chunk[0] != '\n'))
-        {
-          if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
-          {
-            break;
-          }
-          boot_payload[boot_payload_len] = (uint8_t)chunk[0];
-          boot_payload_len++;
-          chunk++;
-        }
-        boot_payload[boot_payload_len] = 0U;
-        cursor = boot_skip_crlf(chunk);
-      }
-      else
-      {
-        boot_payload_append_from_cursor(&chunk, size, rx_end);
-        cursor = chunk;
-      }
-    }
-    else
-    {
-      chunk = boot_skip_crlf(mark);
-      if (size == 0U)
-      {
-        cursor = line + 11U;
-        continue;
-      }
-      boot_payload_append_from_cursor(&chunk, size, rx_end);
-      cursor = chunk;
+      cursor++;
     }
   }
   boot_payload_finalize_json(rx);
@@ -576,7 +516,7 @@ static uint8_t classify_boot_rx(void)
   client = boot_find_http_urc(rx);
   if (client != NULL)
   {
-    if (strstr(view, "\"month\":") != NULL)
+    if ((strstr(view, "\"month\":") != NULL) || (strstr(view, "\"M\":") != NULL))
     {
       return APP_CLOCK_BOOT_DIAG_HTTP;
     }
@@ -645,6 +585,16 @@ static uint8_t boot_key_seen(const char *key)
   return 0U;
 }
 
+/* 長いキーまたは短いキーが見えるか。 */
+static uint8_t boot_field_seen(const char *key_long, const char *key_short)
+{
+  if (boot_key_seen(key_long) != 0U)
+  {
+    return 1U;
+  }
+  return boot_key_seen(key_short);
+}
+
 /* boot GET 受信内容を AppClock へ渡す。 */
 static void boot_publish_snap(uint16_t got)
 {
@@ -653,23 +603,23 @@ static void boot_publish_snap(uint16_t got)
 
   boot_merge_http_payload();
   keys = 0U;
-  if (boot_key_seen("\"year\"") != 0U)
+  if (boot_field_seen("\"year\"", "\"y\":") != 0U)
   {
     keys |= APP_CLOCK_BOOT_SNAP_YEAR;
   }
-  if (boot_key_seen("\"month\"") != 0U)
+  if (boot_field_seen("\"month\"", "\"M\":") != 0U)
   {
     keys |= APP_CLOCK_BOOT_SNAP_MONTH;
   }
-  if (boot_key_seen("\"day\"") != 0U)
+  if (boot_field_seen("\"day\"", "\"d\":") != 0U)
   {
     keys |= APP_CLOCK_BOOT_SNAP_DAY;
   }
-  if (boot_key_seen("\"hour\"") != 0U)
+  if (boot_field_seen("\"hour\"", "\"h\":") != 0U)
   {
     keys |= APP_CLOCK_BOOT_SNAP_HOUR;
   }
-  if (boot_key_seen("\"minute\"") != 0U)
+  if (boot_field_seen("\"minute\"", "\"m\":") != 0U)
   {
     keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
   }
@@ -708,9 +658,23 @@ static uint8_t boot_has_numeric_clock(const char *text)
   {
     return 0U;
   }
-  if (strstr(text, "\"year\":") == NULL || strstr(text, "\"month\":") == NULL ||
-      strstr(text, "\"day\":") == NULL || strstr(text, "\"hour\":") == NULL ||
-      strstr(text, "\"minute\":") == NULL)
+  if ((strstr(text, "\"year\":") == NULL) && (strstr(text, "\"y\":") == NULL))
+  {
+    return 0U;
+  }
+  if ((strstr(text, "\"month\":") == NULL) && (strstr(text, "\"M\":") == NULL))
+  {
+    return 0U;
+  }
+  if ((strstr(text, "\"day\":") == NULL) && (strstr(text, "\"d\":") == NULL))
+  {
+    return 0U;
+  }
+  if ((strstr(text, "\"hour\":") == NULL) && (strstr(text, "\"h\":") == NULL))
+  {
+    return 0U;
+  }
+  if ((strstr(text, "\"minute\":") == NULL) && (strstr(text, "\"m\":") == NULL))
   {
     return 0U;
   }

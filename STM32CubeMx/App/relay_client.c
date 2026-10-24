@@ -146,6 +146,21 @@ static uint8_t parse_json_u16(const char *body, const char *key, uint16_t *value
   return 1U;
 }
 
+/* 長いキーまたは短いキーで整数を読む。 */
+static uint8_t parse_json_u16_alt(const char *body, const char *key_long, const char *key_short,
+                                  uint16_t *value)
+{
+  if (parse_json_u16(body, key_long, value) != 0U)
+  {
+    return 1U;
+  }
+  if (key_short == NULL)
+  {
+    return 0U;
+  }
+  return parse_json_u16(body, key_short, value);
+}
+
 /* 暦要素を RTC へ書く。 */
 static HAL_StatusTypeDef apply_rtc_fields(uint16_t year, uint16_t month, uint16_t day, uint16_t hour,
                                         uint16_t minute, uint16_t second)
@@ -193,16 +208,16 @@ static HAL_StatusTypeDef apply_clock_from_body(const char *body)
   uint16_t minute;
   uint16_t second;
 
-  if ((parse_json_u16(body, "\"year\"", &year) == 0U) ||
-      (parse_json_u16(body, "\"month\"", &month) == 0U) ||
-      (parse_json_u16(body, "\"day\"", &day) == 0U) ||
-      (parse_json_u16(body, "\"hour\"", &hour) == 0U) ||
-      (parse_json_u16(body, "\"minute\"", &minute) == 0U))
+  if ((parse_json_u16_alt(body, "\"year\"", "\"y\":", &year) == 0U) ||
+      (parse_json_u16_alt(body, "\"month\"", "\"M\":", &month) == 0U) ||
+      (parse_json_u16_alt(body, "\"day\"", "\"d\":", &day) == 0U) ||
+      (parse_json_u16_alt(body, "\"hour\"", "\"h\":", &hour) == 0U) ||
+      (parse_json_u16_alt(body, "\"minute\"", "\"m\":", &minute) == 0U))
   {
     return HAL_ERROR;
   }
   second = 0U;
-  (void)parse_json_u16(body, "\"second\"", &second);
+  (void)parse_json_u16_alt(body, "\"second\"", "\"s\":", &second);
   return apply_rtc_fields(year, month, day, hour, minute, second);
 }
 
@@ -214,9 +229,17 @@ static uint8_t parse_mode(const char *body, uint8_t *mode)
   mark = strstr(body, "\"notifyMode\":");
   if (mark == NULL)
   {
-    return 0U;
+    mark = strstr(body, "\"n\":");
+    if (mark == NULL)
+    {
+      return 0U;
+    }
+    mark += 4;
   }
-  mark += 13;
+  else
+  {
+    mark += 13;
+  }
   while (*mark == ' ')
   {
     mark++;
