@@ -198,7 +198,32 @@ static HAL_StatusTypeDef apply_rtc_fields(uint16_t year, uint16_t month, uint16_
   return HAL_OK;
 }
 
-/* 配列 [年,月,日,時,分,notifyMode] を読む。 */
+/* CSV の先頭数字位置。[] 付きにも対応。 */
+static const char *boot_csv_start(const char *body)
+{
+  const char *mark;
+
+  if (body == NULL)
+  {
+    return NULL;
+  }
+  mark = body;
+  if (mark[0] == '[')
+  {
+    mark++;
+  }
+  while ((mark[0] != '\0') && (mark[0] < '0' || mark[0] > '9'))
+  {
+    mark++;
+  }
+  if ((mark[0] < '0') || (mark[0] > '9'))
+  {
+    return NULL;
+  }
+  return mark;
+}
+
+/* 年,月,日,時,分[,notifyMode] の CSV を読む。 */
 static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *month, uint16_t *day,
                                 uint16_t *hour, uint16_t *minute, uint8_t *mode)
 {
@@ -208,16 +233,11 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
   uint8_t digits;
   uint16_t values[6];
 
-  if (body == NULL)
-  {
-    return 0U;
-  }
-  mark = strchr(body, '[');
+  mark = boot_csv_start(body);
   if (mark == NULL)
   {
     return 0U;
   }
-  mark++;
   for (index = 0U; index < 6U; index++)
   {
     while ((*mark == ' ') || (*mark == '\t'))
@@ -226,6 +246,11 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
     }
     if ((*mark < '0') || (*mark > '9'))
     {
+      if (index == 5U)
+      {
+        values[5] = 0U;
+        break;
+      }
       return 0U;
     }
     number = 0U;
@@ -253,6 +278,12 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
     {
       if (*mark != ',')
       {
+        if (index == 4U)
+        {
+          values[5] = 0U;
+          index = 5U;
+          break;
+        }
         return 0U;
       }
       mark++;
@@ -261,6 +292,18 @@ static uint8_t parse_boot_array(const char *body, uint16_t *year, uint16_t *mont
     {
       return 0U;
     }
+  }
+  if (index < 4U)
+  {
+    return 0U;
+  }
+  if (index == 4U)
+  {
+    values[5] = 0U;
+  }
+  if (values[0] < 100U)
+  {
+    values[0] = (uint16_t)(values[0] + 2000U);
   }
   *year = values[0];
   *month = values[1];

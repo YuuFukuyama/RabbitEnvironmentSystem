@@ -164,8 +164,9 @@ async function deviceOps(request, env, url) {
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
   const clock = japanClockParts();
-  // ESP-AT の 1 行 URC 向け。順序固定: 年,月,日,時,分,notifyMode。秒は本体で 0。
-  const body = `[${clock.year},${clock.month},${clock.day},${clock.hour},${clock.minute},${notifyMode}]`;
+  // ESP-AT の 1 行 URC は約 17 バイトまで。2 桁年・括弧なし CSV。秒は本体で 0。
+  const y = clock.year % 100;
+  const body = `${y},${clock.month},${clock.day},${clock.hour},${clock.minute},${notifyMode}`;
   return new Response(body, {
     status: 200,
     headers: {

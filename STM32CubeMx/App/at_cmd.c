@@ -374,6 +374,31 @@ static void boot_payload_finalize_json(const char *rx)
   search = (char *)boot_payload;
   if (boot_payload_len > 0U)
   {
+    start = boot_csv_start(search);
+    if (start != NULL)
+    {
+      end = search + boot_payload_len;
+      while ((end > start) &&
+             ((end[-1] == '\r') || (end[-1] == '\n') || (end[-1] == ' ') || (end[-1] == ']')))
+      {
+        end--;
+      }
+      if (end > start)
+      {
+        len = (uint32_t)(end - start);
+        if (len >= AT_BOOT_PAYLOAD_MAX)
+        {
+          len = AT_BOOT_PAYLOAD_MAX - 1U;
+        }
+        if (start != search)
+        {
+          memmove(boot_payload, start, len);
+        }
+        boot_payload_len = (uint16_t)len;
+        boot_payload[len] = 0U;
+        return;
+      }
+    }
     array = strchr(search, '[');
     object = strchr(search, '{');
     start = NULL;
@@ -430,26 +455,72 @@ static void boot_payload_finalize_json(const char *rx)
   boot_payload[len] = 0U;
 }
 
-/* URC 行の [ または { から行末までを payload へ足す。 */
-static void boot_payload_append_json_line(const char *line, const char *rx_end)
+/* CSV 本文の先頭。 */
+static const char *boot_csv_start(const char *text)
 {
+  const char *mark;
+
+  if (text == NULL)
+  {
+    return NULL;
+  }
+  mark = text;
+  if (mark[0] == '[')
+  {
+    mark++;
+  }
+  while ((mark[0] != '\0') && ((mark[0] < '0') || (mark[0] > '9')))
+  {
+    mark++;
+  }
+  if ((mark[0] < '0') || (mark[0] > '9'))
+  {
+    return NULL;
+  }
+  return mark;
+}
+
+/* +HTTPCLIENT の size 以降の data 部を payload へ足す。 */
+static void boot_payload_append_urc_line(const char *line, const char *rx_end)
+{
+  const char *colon;
+  const char *mark;
   const char *cursor;
-  const char *body;
+  uint8_t had_digit;
 
   if ((line == NULL) || (rx_end == NULL))
   {
     return;
   }
-  body = strchr(line, '[');
-  if (body == NULL)
-  {
-    body = strchr(line, '{');
-  }
-  if (body == NULL)
+  colon = strchr(line, ':');
+  if (colon == NULL)
   {
     return;
   }
-  cursor = body;
+  mark = colon + 1;
+  had_digit = 0U;
+  while ((mark < rx_end) && (mark[0] >= '0') && (mark[0] <= '9'))
+  {
+    had_digit = 1U;
+    mark++;
+  }
+  if ((had_digit != 0U) && (mark < rx_end) && (mark[0] == ','))
+  {
+    mark++;
+  }
+  cursor = strchr(mark, '[');
+  if (cursor == NULL)
+  {
+    cursor = strchr(mark, '{');
+  }
+  if (cursor == NULL)
+  {
+    cursor = boot_csv_start(mark);
+  }
+  if (cursor == NULL)
+  {
+    return;
+  }
   while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\r') && (cursor[0] != '\n'))
   {
     if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
@@ -487,7 +558,7 @@ static void boot_merge_http_payload(void)
     {
       break;
     }
-    boot_payload_append_json_line(line, rx_end);
+    boot_payload_append_urc_line(line, rx_end);
     cursor = line + 12U;
     while ((cursor < rx_end) && (cursor[0] != '\0') && (cursor[0] != '\n'))
     {
@@ -631,12 +702,11 @@ static uint8_t boot_has_boot_array(const char *text)
   {
     return 0U;
   }
-  mark = strchr(text, '[');
+  mark = boot_csv_start(text);
   if (mark == NULL)
   {
     return 0U;
   }
-  mark++;
   for (index = 0U; index < 6U; index++)
   {
     while ((*mark == ' ') || (*mark == '\t'))
@@ -645,6 +715,10 @@ static uint8_t boot_has_boot_array(const char *text)
     }
     if ((*mark < '0') || (*mark > '9'))
     {
+      if (index >= 5U)
+      {
+        return 1U;
+      }
       return 0U;
     }
     digits = 0U;
@@ -665,11 +739,15 @@ static uint8_t boot_has_boot_array(const char *text)
     {
       if (*mark != ',')
       {
+        if (index == 4U)
+        {
+          return 1U;
+        }
         return 0U;
       }
       mark++;
     }
-    else if (*mark != ']')
+    else if ((*mark != ']') && (*mark != '\0') && (*mark != '\r') && (*mark != '\n'))
     {
       return 0U;
     }
@@ -686,12 +764,11 @@ static uint8_t boot_array_snap_keys(const char *text)
   uint8_t digits;
 
   keys = 0U;
-  mark = strchr(text, '[');
+  mark = boot_csv_start(text);
   if (mark == NULL)
   {
     return 0U;
   }
-  mark++;
   for (index = 0U; index < 5U; index++)
   {
     while ((*mark == ' ') || (*mark == '\t'))
