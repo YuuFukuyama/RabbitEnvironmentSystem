@@ -154,7 +154,7 @@ function japanIso(date = new Date()) {
   return `${clock.year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
 }
 
-// 起動時の操作取得。認証済み GET には常に時刻と通知モードを載せる（本体は boot 同期のときだけ呼ぶ）。
+// 起動時の操作取得。認証済み GET には notifyMode だけ載せる（本体は boot 取得のときだけ呼ぶ）。
 async function deviceOps(request, env, url) {
   const rejected = rejectDevice(request, env);
   if (rejected) {
@@ -163,19 +163,15 @@ async function deviceOps(request, env, url) {
   const notifyIds = await alwaysUserIds(env.NotifyUsers);
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
-  const clock = japanClockParts();
-  // ESP-AT の 1 行 URC は約 17 バイトまで。2 桁年・括弧なし CSV。秒は本体で 0。
-  const y = clock.year % 100;
-  const body = `${y},${clock.month},${clock.day},${clock.hour},${clock.minute},${notifyMode}`;
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Encoding": "identity",
-      "Cache-Control": "no-store, private, max-age=0, no-transform",
-      "X-Ops-With-Time": "1",
+  return Response.json(
+    { notifyMode },
+    {
+      headers: {
+        "Content-Encoding": "identity",
+        "Cache-Control": "no-store, private, max-age=0, no-transform",
+      },
     },
-  });
+  );
 }
 
 // 起動時に ON だった利用者を、内容が変わったときだけ書く。

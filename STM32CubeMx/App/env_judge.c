@@ -19,6 +19,7 @@ typedef struct
   int16_t last_temp;                /* 最後に成功した温度。0.1℃単位。 */
   int16_t last_hum;                 /* 最後に成功した湿度。0.1%単位。 */
   uint32_t last_ok_sec;             /* 最後に成功した秒。センサー異常の経過分に使う。 */
+  uint32_t normal_start_sec;        /* NORMAL 継続の起点秒。LCD の継続分に使う。 */
   uint32_t episode_start_sec;       /* WARNING 以上になった秒。LCD の継続分の起点。 */
   uint32_t warning_since_sec;       /* 今回の WARNING 開始秒。DANGER への昇格に使う。 */
   uint32_t warning_notify_sec;      /* WARNING 初回通知の秒。再通知の起点。 */
@@ -54,6 +55,7 @@ static EnvJudgeState state =
   .last_temp = 0,                     /* 成功した温度はまだない。 */
   .last_hum = 0,                      /* 成功した湿度はまだない。 */
   .last_ok_sec = 0U,                  /* 成功した時刻はまだない。 */
+  .normal_start_sec = 0U,             /* NORMAL 継続はまだ始まっていない。 */
   .episode_start_sec = 0U,            /* 異常の継続はまだ始まっていない。 */
   .warning_since_sec = 0U,            /* WARNING はまだ始まっていない。 */
   .warning_notify_sec = 0U,           /* WARNING の初回通知時刻はまだない。 */
@@ -338,11 +340,15 @@ static void fill_view(EnvView *view, uint32_t now_sec, uint8_t sensor_error)
     return;
   }
 
-  if (state.risk != ENV_RISK_NORMAL)
+  if (state.risk == ENV_RISK_NORMAL)
   {
     view->show_minutes = 1U;
-    view->minutes = elapsed_minutes(now_sec, state.episode_start_sec);
+    view->minutes = elapsed_minutes(now_sec, state.normal_start_sec);
+    return;
   }
+
+  view->show_minutes = 1U;
+  view->minutes = elapsed_minutes(now_sec, state.episode_start_sec);
 }
 
 /* 異常通知を載せたら、送信成功まで復帰の資格にしない。 */
@@ -494,6 +500,13 @@ static void apply_success(const EnvReading *reading, uint32_t now_sec,
     state.warning_notified = 0U;
     state.warning_repeated = 0U;
   }
+  if (now_risk == ENV_RISK_NORMAL)
+  {
+    if ((prev != ENV_RISK_NORMAL) || (state.normal_start_sec == 0U))
+    {
+      state.normal_start_sec = now_sec;
+    }
+  }
 
   state.last_temp = reading->temp_deci_c;
   state.last_hum = reading->hum_deci_rh;
@@ -586,6 +599,7 @@ void EnvJudge_AcceptClock(uint32_t old_sec, uint32_t new_sec)
   {
     delta = new_sec - old_sec;
     shift_sec(&state.last_ok_sec, delta);
+    shift_sec(&state.normal_start_sec, delta);
     shift_sec(&state.episode_start_sec, delta);
     shift_sec(&state.warning_since_sec, delta);
     shift_sec(&state.warning_notify_sec, delta);

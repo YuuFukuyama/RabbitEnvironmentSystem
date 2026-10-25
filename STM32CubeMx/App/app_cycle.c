@@ -10,8 +10,6 @@
 #include "stm32f1xx_hal.h"
 
 #define APP_NOTE_CAP 3U
-/* 1 にすると boot GET の暦だけ LCD に出し、測定・送信は行わない。 */
-#define APP_BOOT_FETCH_LCD_ONLY 1U
 
 /* つながっていれば AP から外す。 */
 static void app_drop_wifi(uint8_t wifi_up)
@@ -62,15 +60,6 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
       judge_sec = synced_sec;
     }
   }
-
-#if APP_BOOT_FETCH_LCD_ONLY
-  (void)LcdStatus_ShowBootFetch(hi2c);
-  app_drop_wifi(wifi_up);
-  for (;;)
-  {
-    HAL_Delay(500U);
-  }
-#endif
 
   /* 失敗時の取り直しは取得側で 1 回行う。 */
   (void)EnvSensor_Read(hi2c, &reading);

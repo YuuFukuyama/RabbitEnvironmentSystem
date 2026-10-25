@@ -185,5 +185,5 @@ STM32 の回路やセンサーの未決定は [../../doc/04_detailed_design.md](
 ## 13. 残る作業
 
 - `index.js` の `/v1/ops` と `/v1/measurements` をダッシュボードへ貼って Deploy する。`DEVICE_TOKEN` を Secret に置く。本体の `RELAY_HOST` と `DEVICE_TOKEN` は `wifi_secret.h` に書き、リポジトリには入れない。
-- 認証済み `GET /v1/ops` で数値の日本時間（`year` 〜 `second`）と `notifyMode` を返す。`notifyMode` が 1 のとき、その時点の常に通知モードのユーザー ID を次の起動まで送り先として覚える。
+- 認証済み `GET /v1/ops` で `{"notifyMode":0|1}` のみ返す。`notifyMode` が 1 のとき、その時点の常に通知モードのユーザー ID を次の起動まで送り先として覚える。
 - 届いた測定を `History` の `measurements` に足す。1 件は `at`、`temperature`、`humidity`、`temperatureState`、`humidityState`、`danger` である。1008 件を超えた分は古い測定から捨てる。`notify` が 1 のときは許可済みユーザーと管理者へ push する（通常通知モードは省略あり）。`periodic` が 1 で `notify` が 0 のときは、起動時に常に通知だった利用者へ push する。ダミー取得でも同じ送信をする。

@@ -1,7 +1,6 @@
 /* USART1 で AT を送り、エコーを読みながら応答を見る。 */
 
 #include "at_cmd.h"
-#include "app_clock.h"
 #include "wifi_secret.h"
 #include <string.h>
 
@@ -12,7 +11,6 @@ extern UART_HandleTypeDef huart1;
 #define AT_HTTP_TIMEOUT_MS 20000U
 #define AT_BOOT_PAYLOAD_MAX   1024U
 #define AT_BOOT_POST_OK_MS    1200U
-#define AT_BOOT_CSV_COMMAS    5U
 #define AT_CMD_MAX            240U
 
 /* 1 回の応答。boot GET の分割 +HTTPCLIENT を収める。 */
@@ -22,8 +20,6 @@ static uint8_t boot_payload[AT_BOOT_PAYLOAD_MAX];
 static uint16_t boot_payload_len;
 /* CWJAP のコマンド。パスワードを含むのでログへ出さない。 */
 static uint8_t at_tx[AT_CMD_MAX + 1U];
-/* boot GET 失敗時の at_rx 分類。 */
-static uint8_t boot_rx_diag;
 
 /* 受信に OK があり、mark があればそれも含む。 */
 static uint8_t at_rsp_ok(const char *mark)
@@ -377,32 +373,7 @@ static uint8_t boot_urc_prefix_len(const char *line)
   return 1U;
 }
 
-/* CSV 本文の先頭。 */
-static const char *boot_csv_start(const char *text)
-{
-  const char *mark;
-
-  if (text == NULL)
-  {
-    return NULL;
-  }
-  mark = text;
-  if (mark[0] == '[')
-  {
-    mark++;
-  }
-  while ((mark[0] != '\0') && ((mark[0] < '0') || (mark[0] > '9')))
-  {
-    mark++;
-  }
-  if ((mark[0] < '0') || (mark[0] > '9'))
-  {
-    return NULL;
-  }
-  return mark;
-}
-
-/* 連結 payload から CSV または JSON だけを切り出す。 */
+/* 連結 payload から JSON オブジェクトまたは配列だけを切り出す。 */
 static void boot_payload_finalize_json(void)
 {
   const char *start;
@@ -416,31 +387,6 @@ static void boot_payload_finalize_json(void)
   if (boot_payload_len == 0U)
   {
     return;
-  }
-  start = boot_csv_start(search);
-  if (start != NULL)
-  {
-    end = search + boot_payload_len;
-    while ((end > start) &&
-           ((end[-1] == '\r') || (end[-1] == '\n') || (end[-1] == ' ') || (end[-1] == ']')))
-    {
-      end--;
-    }
-    if (end > start)
-    {
-      len = (uint32_t)(end - start);
-      if (len >= AT_BOOT_PAYLOAD_MAX)
-      {
-        len = AT_BOOT_PAYLOAD_MAX - 1U;
-      }
-      if (start != search)
-      {
-        memmove(boot_payload, start, len);
-      }
-      boot_payload_len = (uint16_t)len;
-      boot_payload[len] = 0U;
-      return;
-    }
   }
   array = strchr(search, '[');
   object = strchr(search, '{');
@@ -536,30 +482,53 @@ static uint8_t boot_line_is_csv_only(const char *start, const char *end)
   return 1U;
 }
 
-/* 連結 CSV が ops 同期に足りるか。前方宣言。 */
-static uint8_t boot_csv_count_commas(const char *start, const char *end);
-static uint8_t boot_merged_ops_csv_ready(const char *text);
+/* 行末まで JSON 断片を payload へ足す。 */
+static void boot_payload_append_json_range(const char **cursor, const char *line_end)
+{
+  char ch;
 
-/* URC 行以外の CSV 続き行を足す。 */
-static void boot_merge_bare_csv_lines(const char *rx, const char *rx_end)
+  if ((cursor == NULL) || (*cursor == NULL) || (line_end == NULL))
+  {
+    return;
+  }
+  while ((*cursor < line_end) && (**cursor != '\0'))
+  {
+    ch = **cursor;
+    if (ch == '\r')
+    {
+      (*cursor)++;
+      continue;
+    }
+    if (ch == '\n')
+    {
+      break;
+    }
+    if (boot_payload_len >= (AT_BOOT_PAYLOAD_MAX - 1U))
+    {
+      break;
+    }
+    boot_payload[boot_payload_len] = (uint8_t)ch;
+    boot_payload_len++;
+    boot_payload[boot_payload_len] = 0U;
+    (*cursor)++;
+  }
+}
+
+/* notifyMode が読めるか。前方宣言。 */
+static uint8_t boot_merged_notify_ready(const char *text);
+
+/* URC 行以外の JSON 続き行を足す。 */
+static void boot_merge_bare_json_lines(const char *rx, const char *rx_end)
 {
   const char *cursor;
   const char *line_end;
   const char *chunk;
-  const char *start;
-  const char *end;
 
   if (boot_payload_len == 0U)
   {
     return;
   }
-  start = boot_csv_start((char *)boot_payload);
-  end = (char *)boot_payload + boot_payload_len;
-  if ((start != NULL) && (boot_csv_count_commas(start, end) >= AT_BOOT_CSV_COMMAS))
-  {
-    return;
-  }
-  if (boot_merged_ops_csv_ready((char *)boot_payload) != 0U)
+  if (boot_merged_notify_ready((char *)boot_payload) != 0U)
   {
     return;
   }
@@ -610,7 +579,20 @@ static void boot_merge_bare_csv_lines(const char *rx, const char *rx_end)
       }
       continue;
     }
-    if (boot_line_is_csv_only(cursor, line_end) != 0U)
+    if (strchr(cursor, '{') != NULL)
+    {
+      chunk = strchr(cursor, '{');
+      if (chunk < line_end)
+      {
+        boot_payload_append_json_range(&chunk, line_end);
+      }
+    }
+    else if (strchr(cursor, '"') != NULL)
+    {
+      chunk = cursor;
+      boot_payload_append_json_range(&chunk, line_end);
+    }
+    else if (boot_line_is_csv_only(cursor, line_end) != 0U)
     {
       chunk = cursor;
       boot_payload_append_csv_range(&chunk, line_end);
@@ -655,6 +637,12 @@ static void boot_payload_append_urc_line(const char *line, const char *rx_end)
   }
   if (had_digit == 0U)
   {
+    return;
+  }
+  chunk = strchr(mark, '{');
+  if ((chunk != NULL) && (chunk < line_end))
+  {
+    boot_payload_append_json_range(&chunk, line_end);
     return;
   }
   if ((mark < line_end) && (mark[0] == ','))
@@ -703,7 +691,7 @@ static void boot_merge_http_payload(void)
       cursor++;
     }
   }
-  boot_merge_bare_csv_lines(rx, rx_end);
+  boot_merge_bare_json_lines(rx, rx_end);
   boot_payload_finalize_json();
 }
 
@@ -714,413 +702,44 @@ static const char *boot_scan_view(void)
   return (char *)boot_payload;
 }
 
-/* boot GET 失敗時に at_rx を分類する。 */
-static uint8_t classify_boot_rx(void)
-{
-  const char *rx;
-  const char *view;
-  const char *client;
-  const char *payload;
-  uint16_t length;
-  uint16_t index;
-  uint8_t non_text;
-
-  rx = (char *)at_rx;
-  view = boot_scan_view();
-  length = 0U;
-  while ((rx[length] != '\0') && (length < (sizeof(at_rx) - 1U)))
-  {
-    length++;
-  }
-  if (length < 8U)
-  {
-    return APP_CLOCK_BOOT_DIAG_EMPTY;
-  }
-  client = boot_find_http_urc(rx);
-  if (client != NULL)
-  {
-    if ((strstr(view, "\"month\":") != NULL) || (strstr(view, "\"M\":") != NULL))
-    {
-      return APP_CLOCK_BOOT_DIAG_HTTP;
-    }
-    if (strchr(view, '[') != NULL)
-    {
-      return APP_CLOCK_BOOT_DIAG_NOTIM;
-    }
-    if (strstr(view, "{") != NULL || strstr(view, "\"ops\"") != NULL)
-    {
-      return APP_CLOCK_BOOT_DIAG_NOTIM;
-    }
-    payload = strchr(client, ',');
-    if (payload != NULL)
-    {
-      payload++;
-      non_text = 0U;
-      for (index = 0U; (payload[index] != '\0') && (payload[index] != '\r') && (index < 48U); index++)
-      {
-        if ((payload[index] == '{') || (payload[index] == '"'))
-        {
-          non_text = 0U;
-          break;
-        }
-        if ((uint8_t)payload[index] < 0x20U || (uint8_t)payload[index] > 0x7EU)
-        {
-          non_text = 1U;
-        }
-      }
-      if (non_text != 0U)
-      {
-        return APP_CLOCK_BOOT_DIAG_GZIP;
-      }
-    }
-    return APP_CLOCK_BOOT_DIAG_HTTPCL;
-  }
-  if (strstr(rx, "+HTTPERR:") != NULL)
-  {
-    return APP_CLOCK_BOOT_DIAG_HTTP;
-  }
-  if ((strstr(rx, "+HTTPCLIENT=") != NULL) || (strstr(rx, "AT+HTTPCLIENT") != NULL))
-  {
-    return APP_CLOCK_BOOT_DIAG_HTTPCL;
-  }
-  if ((strstr(rx, "OK") != NULL) && (length < 40U))
-  {
-    return APP_CLOCK_BOOT_DIAG_EMPTY;
-  }
-  return APP_CLOCK_BOOT_DIAG_HTTP;
-}
-
-uint8_t At_HttpBootRxDiag(void)
-{
-  return boot_rx_diag;
-}
-
-/* view と at_rx のどちらかに JSON キーがあるか。 */
-static uint8_t boot_key_seen(const char *key)
-{
-  const char *view;
-
-  view = boot_scan_view();
-  if (strstr(view, key) != NULL)
-  {
-    return 1U;
-  }
-  if (strstr((char *)at_rx, key) != NULL)
-  {
-    return 1U;
-  }
-  return 0U;
-}
-
-/* 長いキーまたは短いキーが見えるか。 */
-static uint8_t boot_field_seen(const char *key_long, const char *key_short)
-{
-  if (boot_key_seen(key_long) != 0U)
-  {
-    return 1U;
-  }
-  return boot_key_seen(key_short);
-}
-
-/* 配列 [年,月,日,時,分,notifyMode] が 6 要素あるか。 */
-static uint8_t boot_has_boot_array(const char *text)
+/* 本文から notifyMode の JSON 値 0/1 を読む。 */
+static uint8_t boot_parse_notify_json(const char *text, uint8_t *notify_mode)
 {
   const char *mark;
-  uint8_t index;
-  uint8_t digits;
 
-  if (text == NULL)
+  if ((text == NULL) || (notify_mode == NULL))
   {
     return 0U;
   }
-  mark = boot_csv_start(text);
+  mark = strstr(text, "\"notifyMode\":");
   if (mark == NULL)
   {
-    return 0U;
-  }
-  for (index = 0U; index < 6U; index++)
-  {
-    while ((*mark == ' ') || (*mark == '\t'))
-    {
-      mark++;
-    }
-    if ((*mark < '0') || (*mark > '9'))
-    {
-      if (index >= 5U)
-      {
-        return 1U;
-      }
-      return 0U;
-    }
-    digits = 0U;
-    while ((*mark >= '0') && (*mark <= '9'))
-    {
-      mark++;
-      digits++;
-    }
-    if (digits == 0U)
+    mark = strstr(text, "\"n\":");
+    if (mark == NULL)
     {
       return 0U;
     }
-    while ((*mark == ' ') || (*mark == '\t'))
-    {
-      mark++;
-    }
-    if (index < 5U)
-    {
-      if (*mark != ',')
-      {
-        if (index == 4U)
-        {
-          return 1U;
-        }
-        return 0U;
-      }
-      mark++;
-    }
-    else if ((*mark != ']') && (*mark != '\0') && (*mark != '\r') && (*mark != '\n'))
-    {
-      return 0U;
-    }
+    mark += 4;
   }
-  return 1U;
-}
-
-/* 配列の先頭から読めた要素数に応じてスナップ用キー bit を返す。 */
-static uint8_t boot_array_snap_keys(const char *text)
-{
-  const char *mark;
-  uint8_t index;
-  uint8_t keys;
-  uint8_t digits;
-
-  keys = 0U;
-  mark = boot_csv_start(text);
-  if (mark == NULL)
+  else
   {
-    return 0U;
+    mark += 13;
   }
-  for (index = 0U; index < 5U; index++)
+  while (*mark == ' ')
   {
-    while ((*mark == ' ') || (*mark == '\t'))
-    {
-      mark++;
-    }
-    if ((*mark < '0') || (*mark > '9'))
-    {
-      break;
-    }
-    digits = 0U;
-    while ((*mark >= '0') && (*mark <= '9'))
-    {
-      mark++;
-      digits++;
-    }
-    if (digits == 0U)
-    {
-      break;
-    }
-    if (index == 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_YEAR;
-    }
-    else if (index == 1U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_MONTH;
-    }
-    else if (index == 2U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_DAY;
-    }
-    else if (index == 3U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_HOUR;
-    }
-    else
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
-    }
-    while ((*mark == ' ') || (*mark == '\t'))
-    {
-      mark++;
-    }
-    if (*mark != ',')
-    {
-      break;
-    }
     mark++;
   }
-  return keys;
-}
-
-/* boot GET 受信内容を AppClock へ渡す。 */
-static void boot_publish_snap(uint16_t got)
-{
-  const char *urc_line;
-  const char *view;
-  uint8_t keys;
-  uint8_t urc;
-
-  boot_merge_http_payload();
-  urc = APP_CLOCK_BOOT_URC_NONE;
-  urc_line = boot_find_http_urc((char *)at_rx);
-  if (urc_line != NULL)
-  {
-    if (strncmp(urc_line, "+HTTPCLIENT:", 12) == 0)
-    {
-      urc = APP_CLOCK_BOOT_URC_CLIENT;
-    }
-    else
-    {
-      urc = APP_CLOCK_BOOT_URC_GET;
-    }
-  }
-  else if (strstr((char *)at_rx, "+HTTPCLIENT=") != NULL)
-  {
-    urc = APP_CLOCK_BOOT_URC_ECHO;
-  }
-  else if (strstr((char *)at_rx, "AT+HTTPCLIENT") != NULL)
-  {
-    urc = APP_CLOCK_BOOT_URC_ECHO;
-  }
-  view = boot_scan_view();
-  keys = boot_array_snap_keys(view);
-  if (keys == 0U)
-  {
-    keys = 0U;
-    if (boot_field_seen("\"year\"", "\"y\":") != 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_YEAR;
-    }
-    if (boot_field_seen("\"month\"", "\"M\":") != 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_MONTH;
-    }
-    if (boot_field_seen("\"day\"", "\"d\":") != 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_DAY;
-    }
-    if (boot_field_seen("\"hour\"", "\"h\":") != 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_HOUR;
-    }
-    if (boot_field_seen("\"minute\"", "\"m\":") != 0U)
-    {
-      keys |= APP_CLOCK_BOOT_SNAP_MINUTE;
-    }
-  }
-  AppClock_SetBootSnap(got, boot_payload_len, keys, urc);
-}
-
-/* CSV 本文内のカンマ数。 */
-static uint8_t boot_csv_count_commas(const char *start, const char *end)
-{
-  uint8_t count;
-
-  count = 0U;
-  while ((start < end) && (start[0] != '\0'))
-  {
-    if (start[0] == ',')
-    {
-      count++;
-    }
-    start++;
-  }
-  return count;
-}
-
-/* 暦 6 フィールドを読む。notifyMode まで必須。 */
-static uint8_t boot_parse_csv_strict(const char *text, uint16_t *year, uint16_t *month,
-                                     uint16_t *day, uint16_t *hour, uint16_t *minute,
-                                     uint8_t *notify_mode)
-{
-  const char *mark;
-  uint8_t index;
-  uint32_t number;
-  uint8_t digits;
-  uint16_t values[6];
-
-  mark = boot_csv_start(text);
-  if (mark == NULL)
+  if ((*mark != '0') && (*mark != '1'))
   {
     return 0U;
   }
-  for (index = 0U; index < 6U; index++)
-  {
-    while ((mark[0] == ' ') || (mark[0] == '\t'))
-    {
-      mark++;
-    }
-    if ((mark[0] < '0') || (mark[0] > '9'))
-    {
-      return 0U;
-    }
-    number = 0U;
-    digits = 0U;
-    while ((mark[0] >= '0') && (mark[0] <= '9'))
-    {
-      number = (number * 10U) + (uint32_t)(mark[0] - '0');
-      if (number > 65535U)
-      {
-        return 0U;
-      }
-      mark++;
-      digits++;
-    }
-    if (digits == 0U)
-    {
-      return 0U;
-    }
-    values[index] = (uint16_t)number;
-    while ((mark[0] == ' ') || (mark[0] == '\t'))
-    {
-      mark++;
-    }
-    if (index < 5U)
-    {
-      if (mark[0] != ',')
-      {
-        return 0U;
-      }
-      mark++;
-    }
-    else if ((mark[0] != '\0') && (mark[0] != '\r') && (mark[0] != '\n') && (mark[0] != ']'))
-    {
-      return 0U;
-    }
-  }
-  if (values[0] < 100U)
-  {
-    values[0] = (uint16_t)(values[0] + 2000U);
-  }
-  if ((values[0] < 2000U) || (values[0] > 2099U) || (values[1] < 1U) || (values[1] > 12U) ||
-      (values[2] < 1U) || (values[2] > 31U) || (values[3] > 23U) || (values[4] > 59U))
-  {
-    return 0U;
-  }
-  if ((values[5] != 0U) && (values[5] != 1U))
-  {
-    return 0U;
-  }
-  *year = values[0];
-  *month = values[1];
-  *day = values[2];
-  *hour = values[3];
-  *minute = values[4];
-  *notify_mode = (uint8_t)values[5];
+  *notify_mode = (uint8_t)(*mark - '0');
   return 1U;
 }
 
-/* 連結 CSV が ops 同期に足りるか。 */
-static uint8_t boot_merged_ops_csv_ready(const char *text)
+/* 連結 payload に notifyMode があるか。 */
+static uint8_t boot_merged_notify_ready(const char *text)
 {
-  const char *start;
-  const char *end;
-  uint16_t year;
-  uint16_t month;
-  uint16_t day;
-  uint16_t hour;
-  uint16_t minute;
   uint8_t notify_mode;
 
   if (text == NULL)
@@ -1131,60 +750,16 @@ static uint8_t boot_merged_ops_csv_ready(const char *text)
   {
     return 0U;
   }
-  start = boot_csv_start(text);
-  if (start == NULL)
-  {
-    return 0U;
-  }
-  end = (char *)boot_payload + boot_payload_len;
-  if (boot_csv_count_commas(start, end) < AT_BOOT_CSV_COMMAS)
-  {
-    return 0U;
-  }
-  return boot_parse_csv_strict(text, &year, &month, &day, &hour, &minute, &notify_mode);
+  return boot_parse_notify_json(text, &notify_mode);
 }
 
-/* 数値暦キーが揃っているか。 */
-static uint8_t boot_has_numeric_clock(const char *text)
-{
-  if (text == NULL)
-  {
-    return 0U;
-  }
-  if (boot_has_boot_array(text) != 0U)
-  {
-    return 1U;
-  }
-  if ((strstr(text, "\"year\":") == NULL) && (strstr(text, "\"y\":") == NULL))
-  {
-    return 0U;
-  }
-  if ((strstr(text, "\"month\":") == NULL) && (strstr(text, "\"M\":") == NULL))
-  {
-    return 0U;
-  }
-  if ((strstr(text, "\"day\":") == NULL) && (strstr(text, "\"d\":") == NULL))
-  {
-    return 0U;
-  }
-  if ((strstr(text, "\"hour\":") == NULL) && (strstr(text, "\"h\":") == NULL))
-  {
-    return 0U;
-  }
-  if ((strstr(text, "\"minute\":") == NULL) && (strstr(text, "\"m\":") == NULL))
-  {
-    return 0U;
-  }
-  return 1U;
-}
-
-/* 連結 payload が boot 同期に足りるか。at_rx 全体は見ない。 */
-static uint8_t boot_merged_clock_ready(void)
+/* 連結 payload が boot 取得に足りるか。at_rx 全体は見ない。 */
+static uint8_t boot_merged_payload_ready(void)
 {
   const char *view;
 
   view = boot_scan_view();
-  return boot_merged_ops_csv_ready(view);
+  return boot_merged_notify_ready(view);
 }
 
 /* boot GET の分割 URC を連結するまで読む。 */
@@ -1232,13 +807,13 @@ static HAL_StatusTypeDef at_wait_boot_json(uint16_t *got, uint32_t timeout_ms)
     {
       seen_urc = 1U;
     }
-    if ((boot_merged_clock_ready() != 0U) && (seen_ok != 0U) &&
+    if ((boot_merged_payload_ready() != 0U) && (seen_ok != 0U) &&
         ((HAL_GetTick() - last_activity) >= AT_BOOT_POST_OK_MS))
     {
       return HAL_OK;
     }
   }
-  if (boot_merged_clock_ready() != 0U)
+  if (boot_merged_payload_ready() != 0U)
   {
     return HAL_OK;
   }
@@ -1428,21 +1003,15 @@ const char *At_HttpResponse(void)
 
 const char *At_HttpBootBody(void)
 {
-  const char *start;
   const char *json;
 
   boot_merge_http_payload();
-  start = boot_csv_start((char *)boot_payload);
-  if (start != NULL)
-  {
-    return start;
-  }
-  json = strchr((char *)boot_payload, '[');
+  json = strchr((char *)boot_payload, '{');
   if (json != NULL)
   {
     return json;
   }
-  json = strchr((char *)boot_payload, '{');
+  json = strchr((char *)boot_payload, '[');
   if (json != NULL)
   {
     return json;
@@ -1635,11 +1204,9 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
 
   at_boot_rx_reset();
   got = 0U;
-  boot_rx_diag = APP_CLOCK_BOOT_DIAG_HTTP;
   if (at_boot_try_httpcget(host, path, &got) == HAL_OK)
   {
-    boot_publish_snap(got);
-    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    boot_merge_http_payload();
     return HAL_OK;
   }
 
@@ -1647,8 +1214,7 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   got = 0U;
   if (at_boot_try_httpclient_host(host, path, &got) == HAL_OK)
   {
-    boot_publish_snap(got);
-    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    boot_merge_http_payload();
     return HAL_OK;
   }
 
@@ -1656,13 +1222,11 @@ HAL_StatusTypeDef At_HttpGetBoot(const char *host, const char *path)
   got = 0U;
   if (at_boot_try_httpclient_url(host, path, &got) == HAL_OK)
   {
-    boot_publish_snap(got);
-    boot_rx_diag = APP_CLOCK_BOOT_DIAG_NONE;
+    boot_merge_http_payload();
     return HAL_OK;
   }
 
-  boot_rx_diag = classify_boot_rx();
-  boot_publish_snap(got);
+  boot_merge_http_payload();
   return HAL_ERROR;
 }
 
