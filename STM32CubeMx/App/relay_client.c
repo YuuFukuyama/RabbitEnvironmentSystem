@@ -79,41 +79,6 @@ static uint8_t build_url(char *url, uint16_t cap, const char *path)
   return 1U;
 }
 
-/* notifyMode だけ JSON から 0/1 を読む。 */
-static uint8_t parse_notify_json(const char *body, uint8_t *mode)
-{
-  const char *mark;
-
-  if ((body == NULL) || (mode == NULL))
-  {
-    return 0U;
-  }
-  mark = strstr(body, "\"notifyMode\":");
-  if (mark == NULL)
-  {
-    mark = strstr(body, "\"n\":");
-    if (mark == NULL)
-    {
-      return 0U;
-    }
-    mark += 4;
-  }
-  else
-  {
-    mark += 13;
-  }
-  while (*mark == ' ')
-  {
-    mark++;
-  }
-  if ((*mark != '0') && (*mark != '1'))
-  {
-    return 0U;
-  }
-  *mode = (uint8_t)(*mark - '0');
-  return 1U;
-}
-
 uint8_t Relay_TakeBoot(uint32_t *synced_sec)
 {
   const char *body;
@@ -132,7 +97,7 @@ uint8_t Relay_TakeBoot(uint32_t *synced_sec)
     return 0U;
   }
   body = At_HttpBootBody();
-  if (parse_notify_json(body, &mode) == 0U)
+  if (At_BootParseNotifyMode(body, &mode) == 0U)
   {
     return 0U;
   }

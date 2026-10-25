@@ -154,7 +154,7 @@ function japanIso(date = new Date()) {
   return `${clock.year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
 }
 
-// 起動時の操作取得。認証済み GET には notifyMode だけ載せる（本体は boot 取得のときだけ呼ぶ）。
+// 起動時の操作取得。認証済み GET の本文は notifyMode の 0 または 1 のみ（本体は boot 取得のときだけ呼ぶ）。
 async function deviceOps(request, env, url) {
   const rejected = rejectDevice(request, env);
   if (rejected) {
@@ -163,15 +163,13 @@ async function deviceOps(request, env, url) {
   const notifyIds = await alwaysUserIds(env.NotifyUsers);
   const notifyMode = notifyIds.length > 0 ? 1 : 0;
   await storeBootNotify(env.NotifyUsers, notifyMode === 1 ? notifyIds : []);
-  return Response.json(
-    { notifyMode },
-    {
-      headers: {
-        "Content-Encoding": "identity",
-        "Cache-Control": "no-store, private, max-age=0, no-transform",
-      },
+  return new Response(String(notifyMode), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Encoding": "identity",
+      "Cache-Control": "no-store, private, max-age=0, no-transform",
     },
-  );
+  });
 }
 
 // 起動時に ON だった利用者を、内容が変わったときだけ書く。

@@ -373,48 +373,83 @@ static uint8_t boot_urc_prefix_len(const char *line)
   return 1U;
 }
 
-/* 連結 payload から JSON オブジェクトまたは配列だけを切り出す。 */
-static void boot_payload_finalize_json(void)
+/* boot GET 本文から notifyMode 0/1 を読む。 */
+uint8_t At_BootParseNotifyMode(const char *text, uint8_t *mode)
 {
-  const char *start;
-  const char *end;
-  const char *search;
-  const char *array;
-  const char *object;
-  uint32_t len;
+  const char *mark;
+  const char *last_comma;
+  const char *p;
 
-  search = (char *)boot_payload;
+  if ((text == NULL) || (mode == NULL))
+  {
+    return 0U;
+  }
+  mark = text;
+  while ((mark[0] == ' ') || (mark[0] == '\t') || (mark[0] == '\r') || (mark[0] == '\n'))
+  {
+    mark++;
+  }
+  if ((mark[0] == '0') || (mark[0] == '1'))
+  {
+    p = mark + 1;
+    while ((p[0] == ' ') || (p[0] == '\t') || (p[0] == '\r') || (p[0] == '\n'))
+    {
+      p++;
+    }
+    if (p[0] == '\0')
+    {
+      *mode = (uint8_t)(mark[0] - '0');
+      return 1U;
+    }
+  }
+  last_comma = NULL;
+  for (p = text; p[0] != '\0'; p++)
+  {
+    if (p[0] == ',')
+    {
+      last_comma = p;
+    }
+  }
+  if (last_comma != NULL)
+  {
+    mark = last_comma + 1;
+    while ((mark[0] == ' ') || (mark[0] == '\t'))
+    {
+      mark++;
+    }
+    if ((mark[0] == '0') || (mark[0] == '1'))
+    {
+      p = mark + 1;
+      while ((p[0] == ' ') || (p[0] == '\t') || (p[0] == '\r') || (p[0] == '\n'))
+      {
+        p++;
+      }
+      if (p[0] == '\0')
+      {
+        *mode = (uint8_t)(mark[0] - '0');
+        return 1U;
+      }
+    }
+  }
+  return 0U;
+}
+
+/* 連結 payload を 0/1 1 文字に切り詰める。 */
+static void boot_payload_finalize_body(void)
+{
+  uint8_t mode;
+
   if (boot_payload_len == 0U)
   {
     return;
   }
-  array = strchr(search, '[');
-  object = strchr(search, '{');
-  start = NULL;
-  if ((array != NULL) && ((object == NULL) || (array < object)))
+  if (At_BootParseNotifyMode((char *)boot_payload, &mode) == 0U)
   {
-    start = array;
-    end = strchr(start, ']');
+    return;
   }
-  else if (object != NULL)
-  {
-    start = object;
-    end = strrchr(start, '}');
-  }
-  if ((start != NULL) && (end != NULL) && (end > start))
-  {
-    len = (uint32_t)(end - start + 1U);
-    if (len >= AT_BOOT_PAYLOAD_MAX)
-    {
-      len = AT_BOOT_PAYLOAD_MAX - 1U;
-    }
-    if (start != search)
-    {
-      memmove(boot_payload, start, len);
-    }
-    boot_payload_len = (uint16_t)len;
-    boot_payload[len] = 0U;
-  }
+  boot_payload[0] = (uint8_t)('0' + mode);
+  boot_payload[1] = 0U;
+  boot_payload_len = 1U;
 }
 
 /* 行末まで。数字とカンマだけ payload へ足す。 */
@@ -482,6 +517,43 @@ static uint8_t boot_line_is_csv_only(const char *start, const char *end)
   return 1U;
 }
 
+/* 行が 0 または 1 だけか。 */
+static uint8_t boot_line_is_notify_digit(const char *start, const char *end)
+{
+  const char *mark;
+
+  if ((start == NULL) || (end == NULL) || (start >= end))
+  {
+    return 0U;
+  }
+  while ((start < end) && ((start[0] == ' ') || (start[0] == '\t')))
+  {
+    start++;
+  }
+  if (start >= end)
+  {
+    return 0U;
+  }
+  if ((start[0] != '0') && (start[0] != '1'))
+  {
+    return 0U;
+  }
+  mark = start + 1;
+  while (mark < end)
+  {
+    if ((mark[0] == '\r') || (mark[0] == '\n'))
+    {
+      break;
+    }
+    if ((mark[0] != ' ') && (mark[0] != '\t'))
+    {
+      return 0U;
+    }
+    mark++;
+  }
+  return 1U;
+}
+
 /* 行末まで JSON 断片を payload へ足す。 */
 static void boot_payload_append_json_range(const char **cursor, const char *line_end)
 {
@@ -517,8 +589,8 @@ static void boot_payload_append_json_range(const char **cursor, const char *line
 /* notifyMode が読めるか。前方宣言。 */
 static uint8_t boot_merged_notify_ready(const char *text);
 
-/* URC 行以外の JSON 続き行を足す。 */
-static void boot_merge_bare_json_lines(const char *rx, const char *rx_end)
+/* URC 行以外の本文続き行を足す。 */
+static void boot_merge_bare_body_lines(const char *rx, const char *rx_end)
 {
   const char *cursor;
   const char *line_end;
@@ -592,6 +664,22 @@ static void boot_merge_bare_json_lines(const char *rx, const char *rx_end)
       chunk = cursor;
       boot_payload_append_json_range(&chunk, line_end);
     }
+    else if (boot_line_is_notify_digit(cursor, line_end) != 0U)
+    {
+      while ((cursor < line_end) && ((cursor[0] == ' ') || (cursor[0] == '\t')))
+      {
+        cursor++;
+      }
+      if ((cursor < line_end) && ((cursor[0] == '0') || (cursor[0] == '1')))
+      {
+        if (boot_payload_len < (AT_BOOT_PAYLOAD_MAX - 1U))
+        {
+          boot_payload[boot_payload_len] = (uint8_t)cursor[0];
+          boot_payload_len++;
+          boot_payload[boot_payload_len] = 0U;
+        }
+      }
+    }
     else if (boot_line_is_csv_only(cursor, line_end) != 0U)
     {
       chunk = cursor;
@@ -656,7 +744,7 @@ static void boot_payload_append_urc_line(const char *line, const char *rx_end)
   }
 }
 
-/* +HTTPCLIENT / +HTTPCGET 各行の JSON 部を連結する。 */
+/* +HTTPCLIENT / +HTTPCGET 各行の data 部を連結する。 */
 static void boot_merge_http_payload(void)
 {
   const char *rx;
@@ -691,8 +779,8 @@ static void boot_merge_http_payload(void)
       cursor++;
     }
   }
-  boot_merge_bare_json_lines(rx, rx_end);
-  boot_payload_finalize_json();
+  boot_merge_bare_body_lines(rx, rx_end);
+  boot_payload_finalize_body();
 }
 
 /* boot 応答の探索は URC 連結後のみ。 */
@@ -700,41 +788,6 @@ static const char *boot_scan_view(void)
 {
   boot_merge_http_payload();
   return (char *)boot_payload;
-}
-
-/* 本文から notifyMode の JSON 値 0/1 を読む。 */
-static uint8_t boot_parse_notify_json(const char *text, uint8_t *notify_mode)
-{
-  const char *mark;
-
-  if ((text == NULL) || (notify_mode == NULL))
-  {
-    return 0U;
-  }
-  mark = strstr(text, "\"notifyMode\":");
-  if (mark == NULL)
-  {
-    mark = strstr(text, "\"n\":");
-    if (mark == NULL)
-    {
-      return 0U;
-    }
-    mark += 4;
-  }
-  else
-  {
-    mark += 13;
-  }
-  while (*mark == ' ')
-  {
-    mark++;
-  }
-  if ((*mark != '0') && (*mark != '1'))
-  {
-    return 0U;
-  }
-  *notify_mode = (uint8_t)(*mark - '0');
-  return 1U;
 }
 
 /* 連結 payload に notifyMode があるか。 */
@@ -750,7 +803,7 @@ static uint8_t boot_merged_notify_ready(const char *text)
   {
     return 0U;
   }
-  return boot_parse_notify_json(text, &notify_mode);
+  return At_BootParseNotifyMode(text, &notify_mode);
 }
 
 /* 連結 payload が boot 取得に足りるか。at_rx 全体は見ない。 */
@@ -1003,19 +1056,7 @@ const char *At_HttpResponse(void)
 
 const char *At_HttpBootBody(void)
 {
-  const char *json;
-
   boot_merge_http_payload();
-  json = strchr((char *)boot_payload, '{');
-  if (json != NULL)
-  {
-    return json;
-  }
-  json = strchr((char *)boot_payload, '[');
-  if (json != NULL)
-  {
-    return json;
-  }
   return (char *)boot_payload;
 }
 

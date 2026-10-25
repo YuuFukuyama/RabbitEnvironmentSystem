@@ -29,7 +29,10 @@ HAL_StatusTypeDef At_HttpPost(const char *url, const char *body);
 /* 直前の HTTP 応答。 */
 const char *At_HttpResponse(void);
 
-/* 直前の boot GET。+HTTPCLIENT の data 部を連結した JSON。 */
+/* 直前の boot GET。+HTTPCLIENT の data 部を連結した本文。 */
 const char *At_HttpBootBody(void);
+
+/* boot GET 本文から notifyMode 0/1 を読む。 */
+uint8_t At_BootParseNotifyMode(const char *text, uint8_t *mode);
 
 #endif
