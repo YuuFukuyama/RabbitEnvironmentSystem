@@ -27,15 +27,4 @@ typedef struct
   int16_t hum_deci_rh;
 } WifiNote;
 
-#if defined(WIFI_USE_DUMMY)
-#define WIFI_DUMMY_LOG_LEN 4U
-/* ダミーが残す直近の通知。新しいものから上書きする。 */
-extern WifiNote wifi_dummy_log[WIFI_DUMMY_LOG_LEN];
-/* wifi_dummy_log に入っている件数。 */
-extern uint8_t wifi_dummy_log_count;
-#endif
-
-/* 通知を 1 件渡す。ダミーは記録して成功を返す。 */
-HAL_StatusTypeDef Wifi_Publish(const WifiNote *note);
-
 #endif

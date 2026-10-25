@@ -67,8 +67,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/at_cmd.c
     App/relay_client.c
     ${ENV_SENSOR_SOURCE}
-    # Wi-Fi 基板が来たら wifi_dummy.c を本番送信へ差し替え、WIFI_USE_DUMMY を外す
-    App/wifi_dummy.c
 )
 
 # Add include paths
@@ -80,7 +78,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
-    WIFI_USE_DUMMY
     $<$<BOOL:${ENV_SENSOR_USE_DUMMY}>:ENV_SENSOR_USE_DUMMY>
     $<$<BOOL:${ENV_SENSOR_DUMMY_BOUNDARY_TEST}>:ENV_SENSOR_DUMMY_BOUNDARY_TEST>
     $<$<BOOL:${ENV_FAST_MEASURE}>:MEASURE_INTERVAL_SEC=15>

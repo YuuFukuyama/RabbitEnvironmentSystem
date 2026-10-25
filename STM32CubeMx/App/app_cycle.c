@@ -27,7 +27,6 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
   EnvView view;
   WifiNote notes[APP_NOTE_CAP];
   uint8_t note_count;
-  uint8_t index;
   uint8_t wifi_failed;
   uint8_t wifi_up;
   uint32_t judge_sec;
@@ -85,21 +84,10 @@ void App_MeasureOnce(I2C_HandleTypeDef *hi2c, uint32_t now_sec)
     }
     EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
     EnvJudge_NoteWifi(wifi_failed);
-    app_drop_wifi(wifi_up);
-    return;
   }
-
-  for (index = 0U; index < note_count; index++)
+  else
   {
-    if (Wifi_Publish(&notes[index]) != HAL_OK)
-    {
-      wifi_failed = 1U;
-    }
-  }
-  EnvJudge_CommitSend((wifi_failed == 0U) ? 1U : 0U);
-  if (note_count > 0U)
-  {
-    EnvJudge_NoteWifi(wifi_failed);
+    EnvJudge_CommitSend(0U);
   }
   app_drop_wifi(wifi_up);
 }
