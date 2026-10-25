@@ -52,6 +52,77 @@ static const EnvDummyStep env_dummy_steps[] =
   BOUNDARY_H(700)
 };
 
+#elif defined(ENV_SENSOR_DUMMY_RISK_TEST)
+
+/* T-12〜T-15。各ケースの前後は 22.5℃・50 %RH で NORMAL に戻す。 */
+static const EnvDummyStep env_dummy_steps[] =
+{
+  /* T-12: 温度のみ WARNING → 総合 WARN */
+  S2(225, 500),
+  S2(179, 500),
+  /* T-12: 湿度のみ WARNING → 総合 WARN */
+  S2(225, 500),
+  S2(220, 399),
+  /* T-12: 両方 WARNING → 総合 DANG */
+  S2(225, 500),
+  S2(260, 600),
+  /* T-12: 温度 CRITICAL → 総合 CRIT */
+  S2(225, 500),
+  S2(280, 500),
+  /* T-12: 湿度 CRITICAL → 総合 CRIT */
+  S2(225, 500),
+  S2(220, 700),
+  /* T-13: 総合 DANG のまま片側だけ NORMAL 域へ */
+  S2(225, 500),
+  S2(260, 600),
+  S2(260, 500),
+  S2(265, 650),
+  S3(225, 500),
+  /* T-13: 総合 CRIT のまま WARNING 域へ */
+  S2(225, 500),
+  S2(280, 500),
+  S2(260, 500),
+  S3(225, 500),
+  /* T-14: 低温 WARNING。18.9℃は解除せず 19.0℃で解除 */
+  S2(225, 500),
+  S2(170, 500),
+  S2(189, 500),
+  S2(190, 500),
+  /* T-14: 高温 WARNING。17.9℃は解除せず 25.9℃で解除 */
+  S2(225, 500),
+  S2(260, 500),
+  S2(179, 500),
+  S2(259, 500),
+  /* T-14: 乾燥 WARNING。40.9 %RH は解除せず 41.0 %RH で解除 */
+  S2(225, 500),
+  S2(220, 350),
+  S2(220, 409),
+  S2(220, 410),
+  /* T-14: 高湿 WARNING。59.0 %RH は解除せず 58.0 %RH で解除 */
+  S2(225, 500),
+  S2(220, 650),
+  S2(220, 590),
+  S2(220, 580),
+  /* T-14: CRITICAL 帯はヒステリシスなし。内側へ戻すと WARNING へ */
+  S2(225, 500),
+  S2(100, 500),
+  S2(101, 500),
+  S2(225, 500),
+  S2(280, 500),
+  S2(279, 500),
+  S2(225, 500),
+  S2(220, 150),
+  S2(220, 151),
+  S2(225, 500),
+  S2(220, 700),
+  S2(220, 699),
+  /* T-15: WARNING 2 周期 → NORMAL → WARNING 2 周期（2 周期目で初回通知） */
+  S2(225, 500),
+  S2(260, 500),
+  S(225, 500),
+  S2(260, 500)
+};
+
 #else
 
 /* 測定ごとに 1 行進み、末尾の次は先頭に戻る。失敗行はその周期を失敗にする。 */
@@ -113,6 +184,9 @@ static const EnvDummyStep env_dummy_steps[] =
 #if defined(ENV_SENSOR_DUMMY_BOUNDARY_TEST)
 _Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 32U,
                "boundary dummy scenario length");
+#elif defined(ENV_SENSOR_DUMMY_RISK_TEST)
+_Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 103U,
+               "risk dummy scenario length");
 #else
 _Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 100U,
                "dummy scenario length");
