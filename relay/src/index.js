@@ -1,5 +1,5 @@
 // LINE の Webhook を受け、署名を検証して返信する。許可は LineUsers、通知設定は NotifyUsers。
-// 本体の操作取得と測定は /v1/ops と /v1/measurements。測定は History に足す。
+// 本体の操作取得と測定は /v1/ops と /v1/measurements。測定と push 送信は History KV に足す。
 
 const ALLOW_KEY = "allowed-user-ids";
 const NOTIFY_KEY = "notify-on-user-ids";
@@ -10,7 +10,9 @@ const NOTIFY_PREF_STANDARD = "standard";
 const NOTIFY_PREF_SAFE = "safe";
 const NOTIFY_PREF_ALWAYS = "always";
 const HISTORY_KEY = "measurements";
+const PUSH_LOG_KEY = "push-log";
 const HISTORY_LIMIT = 1008;
+const PUSH_LOG_LINE_ITEMS = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LINE_TEXT_LIMIT = 5000;
 const LINE_MONTHLY_LIMIT = 200;
@@ -50,6 +52,9 @@ export default {
     }
     if (url.pathname === "/v1/measurements" && request.method === "POST") {
       return deviceMeasurement(request, env);
+    }
+    if (url.pathname === "/v1/push-log" && request.method === "GET") {
+      return devicePushLog(request, env, url);
     }
     if (request.method !== "POST") {
       return new Response("ok");
@@ -338,6 +343,13 @@ async function pushAlertFiltered(env, ids, record, text) {
     nextLast[userId] = alertPushSnapshot(record);
   }
   if (toSend.length === 0) {
+    await appendPushLog(env.History, {
+      at: japanIso(),
+      recipientCount: 0,
+      httpStatus: 0,
+      skipped: "standard_mode_all",
+      text,
+    });
     return;
   }
   await pushText(env, toSend, text);
@@ -416,7 +428,7 @@ function appendQuotaSuffix(text, used, limit) {
   return combined;
 }
 
-// 同じ文面を利用者へ push する。
+// 同じ文面を利用者へ push し、送信履歴へ足す。
 async function pushText(env, ids, text) {
   if (!ids || ids.length === 0) {
     return;
@@ -427,17 +439,99 @@ async function pushText(env, ids, text) {
   if (usage !== null) {
     bodyText = appendQuotaSuffix(text, usage + ids.length, LINE_MONTHLY_LIMIT);
   }
-  await fetch("https://api.line.me/v2/bot/message/multicast", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      to: ids.slice(0, 500),
-      messages: [{ type: "text", text: bodyText }],
-    }),
+  let httpStatus = 0;
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: ids.slice(0, 500),
+        messages: [{ type: "text", text: bodyText }],
+      }),
+    });
+    httpStatus = res.status;
+  } catch {
+    httpStatus = 0;
+  }
+  await appendPushLog(env.History, {
+    at: japanIso(),
+    recipientCount: ids.length,
+    httpStatus,
+    text: bodyText,
   });
+}
+
+// 認証済み GET で送信履歴の末尾を JSON で返す。
+async function devicePushLog(request, env, url) {
+  const rejected = rejectDevice(request, env);
+  if (rejected) {
+    return rejected;
+  }
+  const limitParam = url.searchParams.get("limit");
+  let limit = 50;
+  if (limitParam !== null) {
+    const parsed = Number(limitParam);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      limit = Math.min(Math.floor(parsed), HISTORY_LIMIT);
+    }
+  }
+  const records = await readPushLog(env.History);
+  const slice = records.length > limit ? records.slice(records.length - limit) : records;
+  return new Response(JSON.stringify(slice), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store, private, max-age=0, no-transform",
+    },
+  });
+}
+
+// 送信履歴の末尾へ足し、上限を超えた分は古いものから捨てる。
+async function appendPushLog(kv, entry) {
+  const records = await readPushLog(kv);
+  records.push(entry);
+  const kept = records.length > HISTORY_LIMIT ? records.slice(records.length - HISTORY_LIMIT) : records;
+  await kv.put(PUSH_LOG_KEY, JSON.stringify(kept));
+}
+
+// 送信履歴を時刻順に読む。
+async function readPushLog(kv) {
+  const raw = await kv.get(PUSH_LOG_KEY);
+  if (!raw) {
+    return [];
+  }
+  const rows = JSON.parse(raw);
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter((row) => typeof row?.at === "string");
+}
+
+// LINE reply 用に直近の送信履歴を短くまとめる。
+function pushLogMessage(records) {
+  if (!records.length) {
+    return { type: "text", text: "【送信履歴】\n記録がありません。" };
+  }
+  const recent = records.slice(-PUSH_LOG_LINE_ITEMS);
+  const blocks = recent.map((row) => formatPushLogEntry(row));
+  return { type: "text", text: ["【送信履歴】", `直近${recent.length}件`, "", ...blocks].join("\n") };
+}
+
+// 送信履歴 1 件を表示用に整形する。
+function formatPushLogEntry(row) {
+  const lines = [row.at];
+  if (row.skipped) {
+    lines.push(`省略: ${row.skipped}`);
+  } else {
+    lines.push(`送:${row.recipientCount}人 HTTP:${row.httpStatus}`);
+  }
+  const preview = typeof row.text === "string" ? row.text.split("\n")[0] : "";
+  if (preview) {
+    lines.push(preview);
+  }
+  return lines.join("\n");
 }
 
 // チャネルシークレットで Webhook の署名を検証する。
@@ -484,6 +578,9 @@ async function messagesFor(env, userId, text) {
   }
   if (text === "詳細") {
     return detailMessages(await recordsWithin24h(env.History));
+  }
+  if (text === "送信履歴") {
+    return pushLogMessage(await readPushLog(env.History));
   }
   return { type: "text", text: "操作を選んでください。" };
 }
