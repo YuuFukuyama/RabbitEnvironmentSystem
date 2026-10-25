@@ -22,8 +22,10 @@
 
 #define SPEC_MEASURE_INTERVAL_SEC 600U
 
-/* 測定間隔は 10 分。 */
+/* 測定間隔。CMake の ENV_FAST_MEASURE で上書き可。 */
+#ifndef MEASURE_INTERVAL_SEC
 #define MEASURE_INTERVAL_SEC 600U
+#endif
 
 /* 詳細設計の分数を、10 分周期の測定回数と同じになる秒数へ換算する。 */
 #define ENV_SCALE_SEC(spec_sec) \

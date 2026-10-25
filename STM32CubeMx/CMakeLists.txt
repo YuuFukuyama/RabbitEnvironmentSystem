@@ -44,10 +44,15 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # テストでダミーシナリオに戻すときは -DENV_SENSOR_USE_DUMMY=ON にする。既定は本番取得。
 option(ENV_SENSOR_USE_DUMMY "温湿度をダミーシナリオで読む" OFF)
+option(ENV_SENSOR_DUMMY_BOUNDARY_TEST "T-10/T-11 境界用ダミーシナリオ" OFF)
+option(ENV_FAST_MEASURE "測定間隔 15 秒（境界試験用。本番記録に使わない）" OFF)
 if(ENV_SENSOR_USE_DUMMY)
     set(ENV_SENSOR_SOURCE App/env_dummy.c)
 else()
     set(ENV_SENSOR_SOURCE App/env_sht31.c)
+endif()
+if(ENV_SENSOR_DUMMY_BOUNDARY_TEST AND NOT ENV_SENSOR_USE_DUMMY)
+    message(FATAL_ERROR "ENV_SENSOR_DUMMY_BOUNDARY_TEST は ENV_SENSOR_USE_DUMMY=ON が必要")
 endif()
 
 # Add sources to executable
@@ -77,6 +82,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
     WIFI_USE_DUMMY
     $<$<BOOL:${ENV_SENSOR_USE_DUMMY}>:ENV_SENSOR_USE_DUMMY>
+    $<$<BOOL:${ENV_SENSOR_DUMMY_BOUNDARY_TEST}>:ENV_SENSOR_DUMMY_BOUNDARY_TEST>
+    $<$<BOOL:${ENV_FAST_MEASURE}>:MEASURE_INTERVAL_SEC=15>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

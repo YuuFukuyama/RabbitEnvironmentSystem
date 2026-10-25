@@ -23,6 +23,37 @@ typedef struct
 #define S7(temp_deci, hum_deci) S5(temp_deci, hum_deci), S2(temp_deci, hum_deci)
 #define F3() F(), F(), F()
 
+/* 境界試験の前に NORMAL へ戻す。T-10 は湿度 50 %RH、T-11 は 22.0℃。 */
+#define BOUNDARY_BASE_T  S(225, 500)
+#define BOUNDARY_BASE_H  S(220, 500)
+#define BOUNDARY_T(temp_deci) BOUNDARY_BASE_T, S((temp_deci), 500)
+#define BOUNDARY_H(hum_deci)  BOUNDARY_BASE_H, S(220, (hum_deci))
+
+#if defined(ENV_SENSOR_DUMMY_BOUNDARY_TEST)
+
+/* T-10 / T-11 の 8 点ずつ。各点の 2 周期目（境界値）を LCD で見る。 */
+static const EnvDummyStep env_dummy_steps[] =
+{
+  BOUNDARY_T(100),
+  BOUNDARY_T(101),
+  BOUNDARY_T(179),
+  BOUNDARY_T(180),
+  BOUNDARY_T(259),
+  BOUNDARY_T(260),
+  BOUNDARY_T(279),
+  BOUNDARY_T(280),
+  BOUNDARY_H(150),
+  BOUNDARY_H(151),
+  BOUNDARY_H(399),
+  BOUNDARY_H(400),
+  BOUNDARY_H(599),
+  BOUNDARY_H(600),
+  BOUNDARY_H(699),
+  BOUNDARY_H(700)
+};
+
+#else
+
 /* 測定ごとに 1 行進み、末尾の次は先頭に戻る。失敗行はその周期を失敗にする。 */
 static const EnvDummyStep env_dummy_steps[] =
 {
@@ -75,10 +106,17 @@ static const EnvDummyStep env_dummy_steps[] =
   S3(225, 500)
 };
 
+#endif
+
 #define ENV_DUMMY_STEP_COUNT ((uint8_t)(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0])))
 
+#if defined(ENV_SENSOR_DUMMY_BOUNDARY_TEST)
+_Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 32U,
+               "boundary dummy scenario length");
+#else
 _Static_assert(sizeof(env_dummy_steps) / sizeof(env_dummy_steps[0]) == 100U,
                "dummy scenario length");
+#endif
 
 /* シナリオの現在位置。末尾の次は 0 に戻る。 */
 static uint8_t step_index;
